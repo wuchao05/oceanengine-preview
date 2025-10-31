@@ -30,8 +30,8 @@ interface SettingsCfg {
   aweme_white_list?: string[]; // 全局固定的抖音号白名单
   proxyUrl?: string; // 代理服务器地址，如 "http://localhost:3001/api/proxy"
   accounts: AccountCfg[]; // 账户与剧名一一对应
-  buildTimeFilterWindowStartMinutes?: number; // 搭建时间过滤窗口起始分钟（相对于当前时间的前N分钟），默认60
-  buildTimeFilterWindowEndMinutes?: number; // 搭建时间过滤窗口结束分钟（相对于当前时间的前N分钟），默认40
+  buildTimeFilterWindowStartMinutes?: number; // 搭建时间过滤窗口起始分钟（相对于当前时间的前N分钟），默认50
+  buildTimeFilterWindowEndMinutes?: number; // 搭建时间过滤窗口结束分钟（相对于当前时间的前N分钟），默认30
   scheduleIntervalMinutes?: number; // 定时执行间隔（分钟），如果设置则每隔指定时间执行一次，否则只执行一次
 }
 
@@ -356,8 +356,8 @@ function loadSettings(file: string): SettingsCfg {
     dryRun: true,
     previewDelayMs: 400,
     fetchConcurrency: 3,
-    buildTimeFilterWindowStartMinutes: 60,
-    buildTimeFilterWindowEndMinutes: 40,
+    buildTimeFilterWindowStartMinutes: 50,
+    buildTimeFilterWindowEndMinutes: 30,
     ...cfg,
     // 如果配置文件中没有 accounts 字段或为空数组，保持为空数组，否则使用配置文件中的值
     accounts: cfg.accounts || [],
@@ -721,8 +721,8 @@ async function runTask(settings: SettingsCfg) {
       "[INIT] settings.json 中的 accounts 为空，正在从飞书多维表格拉取账户配置..."
     );
     accounts = await fetchAccountsFromFeishu(
-      settings.buildTimeFilterWindowStartMinutes || 60,
-      settings.buildTimeFilterWindowEndMinutes || 40
+      settings.buildTimeFilterWindowStartMinutes || 50,
+      settings.buildTimeFilterWindowEndMinutes || 30
     );
     if (!accounts.length) {
       throw new Error("从飞书拉取的账户配置为空，请检查多维表格数据");

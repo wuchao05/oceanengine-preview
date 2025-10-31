@@ -12,8 +12,8 @@
     "看家本领",
     "奈煊剧场"
   ],
-  "buildTimeFilterWindowStartMinutes": 60,
-  "buildTimeFilterWindowEndMinutes": 40,
+  "buildTimeFilterWindowStartMinutes": 50,
+  "buildTimeFilterWindowEndMinutes": 30,
   "scheduleIntervalMinutes": 20,
   "accounts": []
 }
