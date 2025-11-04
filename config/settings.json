@@ -4,14 +4,7 @@
   "previewDelayMs": 400,
   "fetchConcurrency": 3,
   "proxyUrl": "http://localhost:3001/api/proxy",
-  "aweme_white_list": [
-    "小红看剧",
-    "斯娜看剧",
-    "萍通剧坊",
-    "清妍短剧",
-    "看家本领",
-    "奈煊剧场"
-  ],
+  "aweme_white_list": ["茹悟好剧", "俨雅看剧"],
   "buildTimeFilterWindowStartMinutes": 50,
   "buildTimeFilterWindowEndMinutes": 30,
   "scheduleIntervalMinutes": 20,
