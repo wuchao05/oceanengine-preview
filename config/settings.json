@@ -5,8 +5,8 @@
   "fetchConcurrency": 3,
   "proxyUrl": "http://localhost:3001/api/proxy",
   "aweme_white_list": ["茹悟好剧", "俨雅看剧"],
-  "buildTimeFilterWindowStartMinutes": 50,
-  "buildTimeFilterWindowEndMinutes": 30,
+  "buildTimeFilterWindowStartMinutes": 90,
+  "buildTimeFilterWindowEndMinutes": 40,
   "scheduleIntervalMinutes": 20,
   "accounts": []
 }
