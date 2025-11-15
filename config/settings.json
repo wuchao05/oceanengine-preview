@@ -13,7 +13,7 @@
     "奈煊剧场"
   ],
   "buildTimeFilterWindowStartMinutes": 90,
-  "buildTimeFilterWindowEndMinutes": 40,
+  "buildTimeFilterWindowEndMinutes": 20,
   "scheduleIntervalMinutes": 20,
   "accounts": []
 }
