@@ -215,7 +215,7 @@ async function fetchAccountsFromFeishu(
   timeWindowEndMinutes: number
 ): Promise<AccountCfg[]> {
   const FEISHU_API_URL =
-    "https://open.feishu.cn/open-apis/bitable/v1/apps/WdWvbGUXXaokk8sAS94c00IZnsf/tables/tblsAgNBXHYKRwgD/records/search";
+    "https://open.feishu.cn/open-apis/bitable/v1/apps/WdWvbGUXXaokk8sAS94c00IZnsf/tables/tblDOyi2Lzs80sv0/records/search";
 
   // 在查询前获取最新的 token
   const FEISHU_TOKEN = await fetchFeishuToken();
