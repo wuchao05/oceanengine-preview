@@ -7,6 +7,15 @@ import dayjs from "dayjs";
 import customParseFormat from "dayjs/plugin/customParseFormat";
 dayjs.extend(customParseFormat);
 
+const DEFAULT_FEISHU_APP_ID = "cli_a870f7611b7b1013";
+const DEFAULT_FEISHU_APP_SECRET = "NTwHbZG8rpOQyMEnXGPV6cNQ84KEqE8z";
+const DEFAULT_FEISHU_APP_TOKEN = "WdWvbGUXXaokk8sAS94c00IZnsf";
+const DEFAULT_FEISHU_TABLE_ID = "tblDOyi2Lzs80sv0";
+const DEFAULT_FEISHU_BASE_URL =
+  "https://open.feishu.cn/open-apis/bitable/v1";
+const FEISHU_TOKEN_API_URL =
+  "https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal";
+
 // 扩展 global 类型以支持 gc（垃圾回收）
 declare global {
   namespace NodeJS {
@@ -20,15 +29,23 @@ declare global {
 interface AccountCfg {
   aadvid: string; // 广告主ID（与剧名一一对应）
   drama_name: string; // 单个剧名，用于匹配 promotion_name
+  subject?: string; // 主体，用于选择 cookie
+  cookie?: string; // 针对账户的 cookie（可覆盖全局映射）
 }
 
 interface SettingsCfg {
-  cookie: string;
   dryRun?: boolean;
   previewDelayMs?: number;
   fetchConcurrency?: number;
   aweme_white_list?: string[]; // 全局固定的抖音号白名单
   proxyUrl?: string; // 代理服务器地址，如 "http://localhost:3001/api/proxy"
+  cookieChaoqi?: string; // 主体为虎雨/超琦时使用
+  cookieXinya?: string; // 主体为欣雅时使用
+  appId?: string; // 飞书 app_id
+  appSecret?: string; // 飞书 app_secret
+  appToken?: string; // 飞书多维表格 app_token
+  tableId?: string; // 飞书多维表格 table_id
+  baseUrl?: string; // 飞书多维表格 API 基础路径
   accounts: AccountCfg[]; // 账户与剧名一一对应
   buildTimeFilterWindowStartMinutes?: number; // 搭建时间过滤窗口起始分钟（相对于当前时间的前N分钟），默认50
   buildTimeFilterWindowEndMinutes?: number; // 搭建时间过滤窗口结束分钟（相对于当前时间的前N分钟），默认30
@@ -89,6 +106,7 @@ interface FeishuRecord {
   fields: {
     剧名?: FeishuFieldValue[];
     账户?: FeishuFieldValue[];
+    主体?: FeishuFieldValue[];
     日期?: number;
     当前状态?: string;
     搭建时间?: number;
@@ -115,6 +133,14 @@ interface FeishuTokenResp {
   tenant_access_token: string;
 }
 
+interface FeishuConfig {
+  appId: string;
+  appSecret: string;
+  appToken: string;
+  tableId: string;
+  baseUrl: string;
+}
+
 // =============== 工具函数 ===============
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -128,18 +154,16 @@ function parseArgs(): { configPath: string } {
 }
 
 // 获取飞书 app_access_token
-async function fetchFeishuToken(): Promise<string> {
-  const FEISHU_TOKEN_API_URL =
-    "https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal";
-  const FEISHU_APP_ID = "cli_a870f7611b7b1013";
-  const FEISHU_APP_SECRET = "NTwHbZG8rpOQyMEnXGPV6cNQ84KEqE8z";
-
+async function fetchFeishuToken(
+  appId: string,
+  appSecret: string
+): Promise<string> {
   try {
     const resp: { data: FeishuTokenResp } = await axios.post<FeishuTokenResp>(
       FEISHU_TOKEN_API_URL,
       {
-        app_id: FEISHU_APP_ID,
-        app_secret: FEISHU_APP_SECRET,
+        app_id: appId,
+        app_secret: appSecret,
       },
       {
         headers: {
@@ -211,17 +235,24 @@ async function fetchFeishuRecords(
 
 // 从飞书多维表格拉取账户和剧名数据
 async function fetchAccountsFromFeishu(
+  feishuCfg: FeishuConfig,
   timeWindowStartMinutes: number,
   timeWindowEndMinutes: number
 ): Promise<AccountCfg[]> {
-  const FEISHU_API_URL =
-    "https://open.feishu.cn/open-apis/bitable/v1/apps/WdWvbGUXXaokk8sAS94c00IZnsf/tables/tblDOyi2Lzs80sv0/records/search";
+  const baseUrl = (feishuCfg.baseUrl || DEFAULT_FEISHU_BASE_URL).replace(
+    /\/$/,
+    ""
+  );
+  const FEISHU_API_URL = `${baseUrl}/apps/${feishuCfg.appToken}/tables/${feishuCfg.tableId}/records/search`;
 
   // 在查询前获取最新的 token
-  const FEISHU_TOKEN = await fetchFeishuToken();
+  const FEISHU_TOKEN = await fetchFeishuToken(
+    feishuCfg.appId,
+    feishuCfg.appSecret
+  );
 
   const basePayload = {
-    field_names: ["剧名", "账户", "日期", "当前状态", "搭建时间"],
+    field_names: ["剧名", "账户", "主体", "日期", "当前状态", "搭建时间"],
     page_size: 100,
     filter: {
       conjunction: "and",
@@ -306,6 +337,7 @@ async function fetchAccountsFromFeishu(
     for (const record of allRecords) {
       const dramaName = record.fields.剧名?.[0]?.text;
       const accountId = record.fields.账户?.[0]?.text;
+      const subject = record.fields.主体?.[0]?.text?.trim();
       const buildTime = record.fields.搭建时间;
 
       // 检查搭建时间是否在时间窗口内（基于配置的时间窗口）
@@ -325,6 +357,7 @@ async function fetchAccountsFromFeishu(
           accountMap.set(accountId, {
             aadvid: accountId,
             drama_name: dramaName,
+            subject,
           });
           filteredCount++;
         }
@@ -351,17 +384,76 @@ function loadSettings(file: string): SettingsCfg {
   const abs = path.resolve(file);
   const raw = fs.readFileSync(abs, "utf-8");
   const cfg = JSON.parse(raw) as SettingsCfg;
-  if (!cfg.cookie) throw new Error("settings.cookie 不能为空");
+  const cookieChaoqi = (cfg as any).cookieChaoqi ?? (cfg as any).cookie ?? "";
+  const cookieXinya = (cfg as any).cookieXinya ?? "";
   return {
     dryRun: true,
     previewDelayMs: 400,
     fetchConcurrency: 3,
     buildTimeFilterWindowStartMinutes: 50,
     buildTimeFilterWindowEndMinutes: 30,
+    appId: DEFAULT_FEISHU_APP_ID,
+    appSecret: DEFAULT_FEISHU_APP_SECRET,
+    appToken: DEFAULT_FEISHU_APP_TOKEN,
+    tableId: DEFAULT_FEISHU_TABLE_ID,
+    baseUrl: DEFAULT_FEISHU_BASE_URL,
+    cookieChaoqi,
+    cookieXinya,
     ...cfg,
     // 如果配置文件中没有 accounts 字段或为空数组，保持为空数组，否则使用配置文件中的值
     accounts: cfg.accounts || [],
   };
+}
+
+function resolveFeishuConfig(settings: SettingsCfg): FeishuConfig {
+  const appId = settings.appId || DEFAULT_FEISHU_APP_ID;
+  const appSecret = settings.appSecret || DEFAULT_FEISHU_APP_SECRET;
+  const appToken = settings.appToken || DEFAULT_FEISHU_APP_TOKEN;
+  const tableId = settings.tableId || DEFAULT_FEISHU_TABLE_ID;
+  const baseUrl = (settings.baseUrl || DEFAULT_FEISHU_BASE_URL).replace(
+    /\/$/,
+    ""
+  );
+
+  if (!appId || !appSecret || !appToken || !tableId) {
+    throw new Error(
+      "从飞书拉取账户配置需要配置 appId、appSecret、appToken、tableId"
+    );
+  }
+
+  return { appId, appSecret, appToken, tableId, baseUrl };
+}
+
+function resolveAccountCookie(
+  account: AccountCfg,
+  settings: SettingsCfg
+): { cookie: string; alias: string } {
+  const trim = (v?: string) => (v || "").trim();
+  const directCookie = trim(account.cookie);
+  if (directCookie) return { cookie: directCookie, alias: "account.cookie" };
+
+  const subject = trim(account.subject);
+  const cookieChaoqi = trim(settings.cookieChaoqi);
+  const cookieXinya = trim(settings.cookieXinya);
+
+  if (subject === "虎雨" || subject === "超琦") {
+    if (!cookieChaoqi)
+      throw new Error("主体为虎雨/超琦时，需要配置 cookieChaoqi");
+    return { cookie: cookieChaoqi, alias: "cookieChaoqi" };
+  }
+
+  if (subject === "欣雅") {
+    if (!cookieXinya) throw new Error("主体为欣雅时，需要配置 cookieXinya");
+    return { cookie: cookieXinya, alias: "cookieXinya" };
+  }
+
+  if (!subject) {
+    if (cookieChaoqi) return { cookie: cookieChaoqi, alias: "cookieChaoqi" };
+    if (cookieXinya) return { cookie: cookieXinya, alias: "cookieXinya" };
+    throw new Error("未找到可用 cookie，请配置 cookieChaoqi 或 cookieXinya");
+  }
+
+  throw new Error(`主体 ${subject} 未匹配 cookie 规则，请补充映射`);
 }
 
 function createClient(cookie: string, proxyUrl?: string): AxiosInstance {
@@ -720,7 +812,9 @@ async function runTask(settings: SettingsCfg) {
     console.log(
       "[INIT] settings.json 中的 accounts 为空，正在从飞书多维表格拉取账户配置..."
     );
+    const feishuCfg = resolveFeishuConfig(settings);
     accounts = await fetchAccountsFromFeishu(
+      feishuCfg,
       settings.buildTimeFilterWindowStartMinutes || 50,
       settings.buildTimeFilterWindowEndMinutes || 30
     );
@@ -729,7 +823,6 @@ async function runTask(settings: SettingsCfg) {
     }
   }
 
-  const client = createClient(settings.cookie, settings.proxyUrl);
   const dryRun = !!settings.dryRun;
 
   console.log(
@@ -741,8 +834,15 @@ async function runTask(settings: SettingsCfg) {
   );
 
   for (const account of accounts) {
-    const { aadvid, drama_name } = account; // 账户与剧名一一对应（单值）
-    console.log(`\n===== 账户 aadvid=${aadvid} 开始 =====`);
+    const { aadvid, drama_name, subject } = account; // 账户与剧名一一对应（单值）
+    const { cookie: accountCookie, alias: cookieAlias } = resolveAccountCookie(
+      account,
+      settings
+    );
+    const client = createClient(accountCookie, settings.proxyUrl);
+    console.log(
+      `\n===== 账户 aadvid=${aadvid} 主体=${subject || "-"} 使用${cookieAlias} 开始 =====`
+    );
 
     // 1) 拉取广告
     const adsAll = await fetchAllAds(client, aadvid);
