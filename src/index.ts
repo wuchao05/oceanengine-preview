@@ -309,12 +309,12 @@ async function fetchAccountsFromFeishu(
     const allRecords = [...todayRecords, ...yesterdayRecords];
 
     // 调试：输出前3条记录的完整结构
-    if (allRecords.length > 0) {
-      console.log(`[DEBUG] 飞书返回的前3条记录完整结构:`);
-      allRecords.slice(0, 3).forEach((rec, idx) => {
-        console.log(`[DEBUG] 记录 ${idx + 1}:`, JSON.stringify(rec, null, 2));
-      });
-    }
+    // if (allRecords.length > 0) {
+    //   console.log(`[DEBUG] 飞书返回的前3条记录完整结构:`);
+    //   allRecords.slice(0, 3).forEach((rec, idx) => {
+    //     console.log(`[DEBUG] 记录 ${idx + 1}:`, JSON.stringify(rec, null, 2));
+    //   });
+    // }
 
     // 计算时间窗口：使用配置的时间窗口参数
     const now = Date.now();
