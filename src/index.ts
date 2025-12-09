@@ -11,8 +11,7 @@ const DEFAULT_FEISHU_APP_ID = "cli_a870f7611b7b1013";
 const DEFAULT_FEISHU_APP_SECRET = "NTwHbZG8rpOQyMEnXGPV6cNQ84KEqE8z";
 const DEFAULT_FEISHU_APP_TOKEN = "WdWvbGUXXaokk8sAS94c00IZnsf";
 const DEFAULT_FEISHU_TABLE_ID = "tblDOyi2Lzs80sv0";
-const DEFAULT_FEISHU_BASE_URL =
-  "https://open.feishu.cn/open-apis/bitable/v1";
+const DEFAULT_FEISHU_BASE_URL = "https://open.feishu.cn/open-apis/bitable/v1";
 const FEISHU_TOKEN_API_URL =
   "https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal";
 
@@ -362,7 +361,7 @@ async function fetchAccountsFromFeishu(
       // 主体字段可能是字符串或数组格式
       let subject: string | undefined;
       const subjectField = record.fields.主体;
-      if (typeof subjectField === 'string') {
+      if (typeof subjectField === "string") {
         subject = subjectField.trim();
       } else if (Array.isArray(subjectField) && subjectField.length > 0) {
         subject = subjectField[0]?.text?.trim();
@@ -370,7 +369,13 @@ async function fetchAccountsFromFeishu(
 
       // 调试：输出通过时间窗口过滤的账户的主体字段原始结构
       if (accountId) {
-        console.log(`[DEBUG] 账户 ${accountId} 的主体字段类型:`, typeof subjectField, `原始数据:`, JSON.stringify(subjectField), `解析后: "${subject || ''}"`);
+        console.log(
+          `[DEBUG] 账户 ${accountId} 的主体字段类型:`,
+          typeof subjectField,
+          `原始数据:`,
+          JSON.stringify(subjectField),
+          `解析后: "${subject || ""}"`
+        );
       }
 
       if (dramaName && accountId) {
@@ -459,7 +464,9 @@ function resolveAccountCookie(
   const cookieXinya = trim(settings.cookieXinya);
 
   // 调试日志：显示实际的主体值
-  console.log(`[DEBUG] 账户 ${account.aadvid} 主体字段原始值: "${account.subject}", trim后: "${subject}"`);
+  console.log(
+    `[DEBUG] 账户 ${account.aadvid} 主体字段原始值: "${account.subject}", trim后: "${subject}"`
+  );
 
   if (subject === "虎雨" || subject === "超琦") {
     if (!cookieChaoqi)
@@ -866,7 +873,9 @@ async function runTask(settings: SettingsCfg) {
     );
     const client = createClient(accountCookie, settings.proxyUrl);
     console.log(
-      `\n===== 账户 aadvid=${aadvid} 主体="${subject || ""}"(${subject ? '有值' : '空'}) 使用${cookieAlias} 开始 =====`
+      `\n===== 账户 aadvid=${aadvid} 主体="${
+        subject || ""
+      }" 使用${cookieAlias} 开始 =====`
     );
 
     // 1) 拉取广告
