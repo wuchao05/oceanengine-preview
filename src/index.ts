@@ -308,6 +308,14 @@ async function fetchAccountsFromFeishu(
     // 合并两次的数据
     const allRecords = [...todayRecords, ...yesterdayRecords];
 
+    // 调试：输出前3条记录的完整结构
+    if (allRecords.length > 0) {
+      console.log(`[DEBUG] 飞书返回的前3条记录完整结构:`);
+      allRecords.slice(0, 3).forEach((rec, idx) => {
+        console.log(`[DEBUG] 记录 ${idx + 1}:`, JSON.stringify(rec, null, 2));
+      });
+    }
+
     // 计算时间窗口：使用配置的时间窗口参数
     const now = Date.now();
     const timeWindowStart = now - timeWindowStartMinutes * 60 * 1000;
@@ -339,6 +347,11 @@ async function fetchAccountsFromFeishu(
       const accountId = record.fields.账户?.[0]?.text;
       const subject = record.fields.主体?.[0]?.text?.trim();
       const buildTime = record.fields.搭建时间;
+
+      // 调试：输出主体字段的原始结构
+      if (accountId) {
+        console.log(`[DEBUG] 账户 ${accountId} 的主体字段原始数据:`, JSON.stringify(record.fields.主体));
+      }
 
       // 检查搭建时间是否在时间窗口内（基于配置的时间窗口）
       // 如果没有搭建时间，或者不在时间窗口内，则跳过
