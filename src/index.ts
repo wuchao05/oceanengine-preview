@@ -106,7 +106,7 @@ interface FeishuRecord {
   fields: {
     剧名?: FeishuFieldValue[];
     账户?: FeishuFieldValue[];
-    主体?: FeishuFieldValue[];
+    主体?: FeishuFieldValue[] | string; // 主体字段可能是数组或直接字符串
     日期?: number;
     当前状态?: string;
     搭建时间?: number;
@@ -345,13 +345,7 @@ async function fetchAccountsFromFeishu(
     for (const record of allRecords) {
       const dramaName = record.fields.剧名?.[0]?.text;
       const accountId = record.fields.账户?.[0]?.text;
-      const subject = record.fields.主体?.[0]?.text?.trim();
       const buildTime = record.fields.搭建时间;
-
-      // 调试：输出主体字段的原始结构
-      if (accountId) {
-        console.log(`[DEBUG] 账户 ${accountId} 的主体字段原始数据:`, JSON.stringify(record.fields.主体));
-      }
 
       // 检查搭建时间是否在时间窗口内（基于配置的时间窗口）
       // 如果没有搭建时间，或者不在时间窗口内，则跳过
@@ -362,6 +356,21 @@ async function fetchAccountsFromFeishu(
       ) {
         skippedByTimeCount++;
         continue;
+      }
+
+      // 时间窗口过滤后，再解析主体字段
+      // 主体字段可能是字符串或数组格式
+      let subject: string | undefined;
+      const subjectField = record.fields.主体;
+      if (typeof subjectField === 'string') {
+        subject = subjectField.trim();
+      } else if (Array.isArray(subjectField) && subjectField.length > 0) {
+        subject = subjectField[0]?.text?.trim();
+      }
+
+      // 调试：输出通过时间窗口过滤的账户的主体字段原始结构
+      if (accountId) {
+        console.log(`[DEBUG] 账户 ${accountId} 的主体字段类型:`, typeof subjectField, `原始数据:`, JSON.stringify(subjectField), `解析后: "${subject || ''}"`);
       }
 
       if (dramaName && accountId) {
