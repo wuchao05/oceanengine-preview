@@ -436,6 +436,9 @@ function resolveAccountCookie(
   const cookieChaoqi = trim(settings.cookieChaoqi);
   const cookieXinya = trim(settings.cookieXinya);
 
+  // 调试日志：显示实际的主体值
+  console.log(`[DEBUG] 账户 ${account.aadvid} 主体字段原始值: "${account.subject}", trim后: "${subject}"`);
+
   if (subject === "虎雨" || subject === "超琦") {
     if (!cookieChaoqi)
       throw new Error("主体为虎雨/超琦时，需要配置 cookieChaoqi");
@@ -841,7 +844,7 @@ async function runTask(settings: SettingsCfg) {
     );
     const client = createClient(accountCookie, settings.proxyUrl);
     console.log(
-      `\n===== 账户 aadvid=${aadvid} 主体=${subject || "-"} 使用${cookieAlias} 开始 =====`
+      `\n===== 账户 aadvid=${aadvid} 主体="${subject || ""}"(${subject ? '有值' : '空'}) 使用${cookieAlias} 开始 =====`
     );
 
     // 1) 拉取广告
