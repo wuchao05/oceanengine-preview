@@ -28,8 +28,7 @@ declare global {
 interface AccountCfg {
   aadvid: string; // 广告主ID（与剧名一一对应）
   drama_name: string; // 单个剧名，用于匹配 promotion_name
-  subject?: string; // 主体，用于选择 cookie
-  cookie?: string; // 针对账户的 cookie（可覆盖全局映射）
+  cookie?: string; // 针对账户的 cookie（可覆盖全局 cookie）
 }
 
 interface SettingsCfg {
@@ -38,8 +37,7 @@ interface SettingsCfg {
   fetchConcurrency?: number;
   aweme_white_list?: string[]; // 全局固定的抖音号白名单
   proxyUrl?: string; // 代理服务器地址，如 "http://localhost:3001/api/proxy"
-  cookieChaoqi?: string; // 主体为虎雨/超琦时使用
-  cookieXinya?: string; // 主体为欣雅时使用
+  cookie?: string; // 全局 cookie
   appId?: string; // 飞书 app_id
   appSecret?: string; // 飞书 app_secret
   appToken?: string; // 飞书多维表格 app_token
@@ -105,7 +103,6 @@ interface FeishuRecord {
   fields: {
     剧名?: FeishuFieldValue[];
     账户?: FeishuFieldValue[];
-    主体?: FeishuFieldValue[] | string; // 主体字段可能是数组或直接字符串
     日期?: number;
     当前状态?: string;
     搭建时间?: number;
@@ -251,7 +248,7 @@ async function fetchAccountsFromFeishu(
   );
 
   const basePayload = {
-    field_names: ["剧名", "账户", "主体", "日期", "当前状态", "搭建时间"],
+    field_names: ["剧名", "账户", "日期", "当前状态", "搭建时间"],
     page_size: 100,
     filter: {
       conjunction: "and",
@@ -357,34 +354,12 @@ async function fetchAccountsFromFeishu(
         continue;
       }
 
-      // 时间窗口过滤后，再解析主体字段
-      // 主体字段可能是字符串或数组格式
-      let subject: string | undefined;
-      const subjectField = record.fields.主体;
-      if (typeof subjectField === "string") {
-        subject = subjectField.trim();
-      } else if (Array.isArray(subjectField) && subjectField.length > 0) {
-        subject = subjectField[0]?.text?.trim();
-      }
-
-      // 调试：输出通过时间窗口过滤的账户的主体字段原始结构
-      if (accountId) {
-        console.log(
-          `[DEBUG] 账户 ${accountId} 的主体字段类型:`,
-          typeof subjectField,
-          `原始数据:`,
-          JSON.stringify(subjectField),
-          `解析后: "${subject || ""}"`
-        );
-      }
-
       if (dramaName && accountId) {
         // 如果该账户还没有被添加过，则添加
         if (!accountMap.has(accountId)) {
           accountMap.set(accountId, {
             aadvid: accountId,
             drama_name: dramaName,
-            subject,
           });
           filteredCount++;
         }
@@ -411,8 +386,8 @@ function loadSettings(file: string): SettingsCfg {
   const abs = path.resolve(file);
   const raw = fs.readFileSync(abs, "utf-8");
   const cfg = JSON.parse(raw) as SettingsCfg;
-  const cookieChaoqi = (cfg as any).cookieChaoqi ?? (cfg as any).cookie ?? "";
-  const cookieXinya = (cfg as any).cookieXinya ?? "";
+  // 兼容旧配置：如果配置了 cookieChaoqi，优先使用它作为全局 cookie
+  const cookie = (cfg as any).cookieChaoqi ?? (cfg as any).cookie ?? "";
   return {
     dryRun: true,
     previewDelayMs: 400,
@@ -424,8 +399,7 @@ function loadSettings(file: string): SettingsCfg {
     appToken: DEFAULT_FEISHU_APP_TOKEN,
     tableId: DEFAULT_FEISHU_TABLE_ID,
     baseUrl: DEFAULT_FEISHU_BASE_URL,
-    cookieChaoqi,
-    cookieXinya,
+    cookie,
     ...cfg,
     // 如果配置文件中没有 accounts 字段或为空数组，保持为空数组，否则使用配置文件中的值
     accounts: cfg.accounts || [],
@@ -449,43 +423,6 @@ function resolveFeishuConfig(settings: SettingsCfg): FeishuConfig {
   }
 
   return { appId, appSecret, appToken, tableId, baseUrl };
-}
-
-function resolveAccountCookie(
-  account: AccountCfg,
-  settings: SettingsCfg
-): { cookie: string; alias: string } {
-  const trim = (v?: string) => (v || "").trim();
-  const directCookie = trim(account.cookie);
-  if (directCookie) return { cookie: directCookie, alias: "account.cookie" };
-
-  const subject = trim(account.subject);
-  const cookieChaoqi = trim(settings.cookieChaoqi);
-  const cookieXinya = trim(settings.cookieXinya);
-
-  // 调试日志：显示实际的主体值
-  console.log(
-    `[DEBUG] 账户 ${account.aadvid} 主体字段原始值: "${account.subject}", trim后: "${subject}"`
-  );
-
-  if (subject === "虎雨" || subject === "超琦") {
-    if (!cookieChaoqi)
-      throw new Error("主体为虎雨/超琦时，需要配置 cookieChaoqi");
-    return { cookie: cookieChaoqi, alias: "cookieChaoqi" };
-  }
-
-  if (subject === "欣雅") {
-    if (!cookieXinya) throw new Error("主体为欣雅时，需要配置 cookieXinya");
-    return { cookie: cookieXinya, alias: "cookieXinya" };
-  }
-
-  if (!subject) {
-    if (cookieChaoqi) return { cookie: cookieChaoqi, alias: "cookieChaoqi" };
-    if (cookieXinya) return { cookie: cookieXinya, alias: "cookieXinya" };
-    throw new Error("未找到可用 cookie，请配置 cookieChaoqi 或 cookieXinya");
-  }
-
-  throw new Error(`主体 ${subject} 未匹配 cookie 规则，请补充映射`);
 }
 
 function createClient(cookie: string, proxyUrl?: string): AxiosInstance {
@@ -699,17 +636,20 @@ async function fetchMaterialsByPromotions(
 function classifyMaterials(materials: MaterialItem[]) {
   const ensureArr = (x?: string[]) => (Array.isArray(x) ? x : []);
 
+  // 判断 material_status_second_name 是否只包含"账户余额不足"
+  const isOnlyBalanceInsufficient = (m: MaterialItem) => {
+    const secondNames = ensureArr(m.material_status_second_name);
+    return secondNames.length === 1 && secondNames[0] === "账户余额不足";
+  };
+
   const needPreview = materials.filter(
     (m) =>
-      m.material_status_first_name === "投放中" &&
-      ensureArr(m.material_status_second_name).length === 0 &&
-      (m.material_reject_reason_type ?? 0) === 0
+      isOnlyBalanceInsufficient(m) && (m.material_reject_reason_type ?? 0) === 0
   );
 
   const needDelete = materials.filter(
     (m) =>
-      m.material_status_first_name === "投放中" &&
-      (m.material_reject_reason_type ?? 0) === 1
+      isOnlyBalanceInsufficient(m) && (m.material_reject_reason_type ?? 0) === 1
   );
 
   return { needPreview, needDelete };
@@ -727,19 +667,33 @@ function groupBy<T, K extends string | number>(
 }
 
 function promotionsToDelete(materials: MaterialItem[]): string[] {
+  const ensureArr = (x?: string[]) => (Array.isArray(x) ? x : []);
+
+  // 判断 material_status_second_name 是否只包含"账户余额不足"
+  const isOnlyBalanceInsufficient = (m: MaterialItem) => {
+    const secondNames = ensureArr(m.material_status_second_name);
+    return secondNames.length === 1 && secondNames[0] === "账户余额不足";
+  };
+
   const byPromotion = groupBy(materials, (m) => m.promotion_id);
   const toDelete: string[] = [];
   for (const [pid, mats] of Object.entries(byPromotion)) {
+    // 检查是否有需要预览的素材（只包含"账户余额不足" + reject_reason_type = 0）
     const anyPreview = mats.some(
       (m) =>
-        m.material_status_first_name === "投放中" &&
-        (m.material_status_second_name?.length || 0) === 0 &&
+        isOnlyBalanceInsufficient(m) &&
         (m.material_reject_reason_type ?? 0) === 0
     );
-    const anyNewAudit = mats.some((m) =>
-      (m.material_status_second_name || []).includes("新建审核中")
+
+    // 检查是否所有素材的 material_status_second_name 只包含"账户余额不足"
+    const allOnlyBalanceInsufficient = mats.every((m) =>
+      isOnlyBalanceInsufficient(m)
     );
-    if (!anyPreview && !anyNewAudit) toDelete.push(pid);
+
+    // 如果既无需预览素材，且所有素材都只包含"账户余额不足"，则整单删除
+    if (!anyPreview && allOnlyBalanceInsufficient) {
+      toDelete.push(pid);
+    }
   }
   return toDelete;
 }
@@ -866,16 +820,19 @@ async function runTask(settings: SettingsCfg) {
   );
 
   for (const account of accounts) {
-    const { aadvid, drama_name, subject } = account; // 账户与剧名一一对应（单值）
-    const { cookie: accountCookie, alias: cookieAlias } = resolveAccountCookie(
-      account,
-      settings
-    );
+    const { aadvid, drama_name } = account; // 账户与剧名一一对应（单值）
+
+    // 优先使用账户级别的 cookie，否则使用全局 cookie
+    const accountCookie = account.cookie || settings.cookie;
+    if (!accountCookie) {
+      throw new Error(
+        `账户 ${aadvid} 未配置 cookie，请在账户配置或全局配置中添加 cookie`
+      );
+    }
+
     const client = createClient(accountCookie, settings.proxyUrl);
     console.log(
-      `\n===== 账户 aadvid=${aadvid} 主体="${
-        subject || ""
-      }" 使用${cookieAlias} 开始 =====`
+      `\n===== 账户 aadvid=${aadvid} 剧名="${drama_name}" 开始 =====`
     );
 
     // 1) 拉取广告
