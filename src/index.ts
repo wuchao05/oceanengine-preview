@@ -642,6 +642,12 @@ function classifyMaterials(materials: MaterialItem[]) {
     return secondNames.length === 1 && secondNames[0] === "账户余额不足";
   };
 
+  // 判断 material_status_second_name 是否包含"审核不通过"
+  const containsRejectStatus = (m: MaterialItem) => {
+    const secondNames = ensureArr(m.material_status_second_name);
+    return secondNames.includes("审核不通过");
+  };
+
   const needPreview = materials.filter(
     (m) =>
       isOnlyBalanceInsufficient(m) && (m.material_reject_reason_type ?? 0) === 0
@@ -649,7 +655,9 @@ function classifyMaterials(materials: MaterialItem[]) {
 
   const needDelete = materials.filter(
     (m) =>
-      isOnlyBalanceInsufficient(m) && (m.material_reject_reason_type ?? 0) === 1
+      (isOnlyBalanceInsufficient(m) &&
+        (m.material_reject_reason_type ?? 0) === 1) ||
+      (containsRejectStatus(m) && (m.material_reject_reason_type ?? 0) === 1)
   );
 
   return { needPreview, needDelete };
@@ -675,6 +683,21 @@ function promotionsToDelete(materials: MaterialItem[]): string[] {
     return secondNames.length === 1 && secondNames[0] === "账户余额不足";
   };
 
+  // 判断 material_status_second_name 是否包含"审核不通过"
+  const containsRejectStatus = (m: MaterialItem) => {
+    const secondNames = ensureArr(m.material_status_second_name);
+    return secondNames.includes("审核不通过");
+  };
+
+  // 判断素材是否应该被删除
+  const shouldDelete = (m: MaterialItem) => {
+    return (
+      (isOnlyBalanceInsufficient(m) &&
+        (m.material_reject_reason_type ?? 0) === 1) ||
+      (containsRejectStatus(m) && (m.material_reject_reason_type ?? 0) === 1)
+    );
+  };
+
   const byPromotion = groupBy(materials, (m) => m.promotion_id);
   const toDelete: string[] = [];
   for (const [pid, mats] of Object.entries(byPromotion)) {
@@ -685,13 +708,11 @@ function promotionsToDelete(materials: MaterialItem[]): string[] {
         (m.material_reject_reason_type ?? 0) === 0
     );
 
-    // 检查是否所有素材的 material_status_second_name 只包含"账户余额不足"
-    const allOnlyBalanceInsufficient = mats.every((m) =>
-      isOnlyBalanceInsufficient(m)
-    );
+    // 检查是否所有素材都应该被删除
+    const allShouldDelete = mats.every((m) => shouldDelete(m));
 
-    // 如果既无需预览素材，且所有素材都只包含"账户余额不足"，则整单删除
-    if (!anyPreview && allOnlyBalanceInsufficient) {
+    // 如果既无需预览素材，且所有素材都应该被删除，则整单删除
+    if (!anyPreview && allShouldDelete) {
       toDelete.push(pid);
     }
   }
