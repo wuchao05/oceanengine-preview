@@ -20,10 +20,16 @@
     "哈哈看剧",
     "葸辉爆剧",
     "婉纨好剧",
+    "葸辉剧场",
+    "排桐剧场",
+    "小红好剧",
+    "淼淼看剧",
+    "宇宙好剧",
+    "微微看剧",
     "葸辉剧场"
   ],
   "buildTimeFilterWindowStartMinutes": 90,
   "buildTimeFilterWindowEndMinutes": 20,
-  "scheduleIntervalMinutes": 20,
+  "scheduleIntervalMinutes": 50,
   "accounts": []
 }
