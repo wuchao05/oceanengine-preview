@@ -106,6 +106,7 @@ interface FeishuRecord {
     日期?: number;
     当前状态?: string;
     搭建时间?: number;
+    主体?: FeishuFieldValue[];
   };
   record_id: string;
 }
@@ -152,7 +153,7 @@ function parseArgs(): { configPath: string } {
 // 获取飞书 app_access_token
 async function fetchFeishuToken(
   appId: string,
-  appSecret: string
+  appSecret: string,
 ): Promise<string> {
   try {
     const resp: { data: FeishuTokenResp } = await axios.post<FeishuTokenResp>(
@@ -168,12 +169,12 @@ async function fetchFeishuToken(
           "Accept-Encoding": "gzip, deflate, br",
           Connection: "keep-alive",
         },
-      }
+      },
     );
 
     if (resp.data?.code !== 0) {
       throw new Error(
-        `获取飞书 token 失败: ${resp.data?.msg || "unknown error"}`
+        `获取飞书 token 失败: ${resp.data?.msg || "unknown error"}`,
       );
     }
 
@@ -189,7 +190,7 @@ async function fetchFeishuToken(
 async function fetchFeishuRecords(
   url: string,
   token: string,
-  payload: any
+  payload: any,
 ): Promise<FeishuRecord[]> {
   const allRecords: FeishuRecord[] = [];
   let pageToken: string | undefined = undefined;
@@ -208,12 +209,12 @@ async function fetchFeishuRecords(
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json; charset=utf-8",
         },
-      }
+      },
     );
 
     if (resp.data?.code !== 0) {
       throw new Error(
-        `飞书 API 请求失败: ${resp.data?.msg || "unknown error"}`
+        `飞书 API 请求失败: ${resp.data?.msg || "unknown error"}`,
       );
     }
 
@@ -229,25 +230,29 @@ async function fetchFeishuRecords(
   return allRecords;
 }
 
-// 从飞书多维表格拉取账户和剧名数据
+// 定义两个表的 ID
+const TABLE_ID_1 = "tblJcLhLpEkmFkga";
+const TABLE_ID_2 = "tblZB1ujNLN7Onpl";
+
+// 从飞书多维表格拉取账户和剧名数据（支持两个表合并）
 async function fetchAccountsFromFeishu(
   feishuCfg: FeishuConfig,
   timeWindowStartMinutes: number,
-  timeWindowEndMinutes: number
+  timeWindowEndMinutes: number,
 ): Promise<AccountCfg[]> {
   const baseUrl = (feishuCfg.baseUrl || DEFAULT_FEISHU_BASE_URL).replace(
     /\/$/,
-    ""
+    "",
   );
-  const FEISHU_API_URL = `${baseUrl}/apps/${feishuCfg.appToken}/tables/${feishuCfg.tableId}/records/search`;
 
   // 在查询前获取最新的 token
   const FEISHU_TOKEN = await fetchFeishuToken(
     feishuCfg.appId,
-    feishuCfg.appSecret
+    feishuCfg.appSecret,
   );
 
-  const basePayload = {
+  // 构建基础 payload（表1）
+  const basePayload1 = {
     field_names: ["剧名", "账户", "日期", "当前状态", "搭建时间"],
     page_size: 100,
     filter: {
@@ -262,47 +267,101 @@ async function fetchAccountsFromFeishu(
     },
   };
 
-  // 拉取 Today 的数据
-  const todayPayload = {
-    ...basePayload,
+  // 构建基础 payload（表2，需要额外过滤"主体"="每日"）
+  const basePayload2 = {
+    field_names: ["剧名", "账户", "日期", "当前状态", "搭建时间", "主体"],
+    page_size: 100,
     filter: {
-      ...basePayload.filter,
+      conjunction: "and",
       conditions: [
-        ...basePayload.filter.conditions,
         {
-          field_name: "日期",
+          field_name: "当前状态",
           operator: "is",
-          value: ["Today"],
+          value: ["已完成"],
+        },
+        {
+          field_name: "主体",
+          operator: "is",
+          value: ["每日"],
         },
       ],
     },
   };
 
-  // 拉取 Yesterday 的数据
-  const yesterdayPayload = {
-    ...basePayload,
-    filter: {
-      ...basePayload.filter,
-      conditions: [
-        ...basePayload.filter.conditions,
-        {
-          field_name: "日期",
-          operator: "is",
-          value: ["Yesterday"],
-        },
-      ],
-    },
+  // 辅助函数：为单个表创建 Today 和 Yesterday 的 payload
+  const createPayloads = (basePayload: any) => {
+    const todayPayload = {
+      ...basePayload,
+      filter: {
+        ...basePayload.filter,
+        conditions: [
+          ...basePayload.filter.conditions,
+          {
+            field_name: "日期",
+            operator: "is",
+            value: ["Today"],
+          },
+        ],
+      },
+    };
+
+    const yesterdayPayload = {
+      ...basePayload,
+      filter: {
+        ...basePayload.filter,
+        conditions: [
+          ...basePayload.filter.conditions,
+          {
+            field_name: "日期",
+            operator: "is",
+            value: ["Yesterday"],
+          },
+        ],
+      },
+    };
+    return { todayPayload, yesterdayPayload };
   };
+
+  const payloads1 = createPayloads(basePayload1);
+  const payloads2 = createPayloads(basePayload2);
 
   try {
-    // 并行请求两次（自动处理分页）
-    const [todayRecords, yesterdayRecords] = await Promise.all([
-      fetchFeishuRecords(FEISHU_API_URL, FEISHU_TOKEN, todayPayload),
-      fetchFeishuRecords(FEISHU_API_URL, FEISHU_TOKEN, yesterdayPayload),
+    // 并行请求两个表（每个表有 Today 和 Yesterday 两个查询）
+    const [
+      table1TodayRecords,
+      table1YesterdayRecords,
+      table2TodayRecords,
+      table2YesterdayRecords,
+    ] = await Promise.all([
+      fetchFeishuRecords(
+        `${baseUrl}/apps/${feishuCfg.appToken}/tables/${TABLE_ID_1}/records/search`,
+        FEISHU_TOKEN,
+        payloads1.todayPayload,
+      ),
+      fetchFeishuRecords(
+        `${baseUrl}/apps/${feishuCfg.appToken}/tables/${TABLE_ID_1}/records/search`,
+        FEISHU_TOKEN,
+        payloads1.yesterdayPayload,
+      ),
+      fetchFeishuRecords(
+        `${baseUrl}/apps/${feishuCfg.appToken}/tables/${TABLE_ID_2}/records/search`,
+        FEISHU_TOKEN,
+        payloads2.todayPayload,
+      ),
+      fetchFeishuRecords(
+        `${baseUrl}/apps/${feishuCfg.appToken}/tables/${TABLE_ID_2}/records/search`,
+        FEISHU_TOKEN,
+        payloads2.yesterdayPayload,
+      ),
     ]);
 
-    // 合并两次的数据
-    const allRecords = [...todayRecords, ...yesterdayRecords];
+    // 合并所有数据
+    const allRecords = [
+      ...table1TodayRecords,
+      ...table1YesterdayRecords,
+      ...table2TodayRecords,
+      ...table2YesterdayRecords,
+    ];
 
     // 调试：输出前3条记录的完整结构
     // if (allRecords.length > 0) {
@@ -330,7 +389,7 @@ async function fetchAccountsFromFeishu(
     const windowEndStr = formatTime(timeWindowEnd);
 
     console.log(
-      `[INFO] 从飞书拉取数据：当前时间 ${currentTimeStr}，选取搭建时间在 ${windowStartStr}-${windowEndStr} 之间的账户（前${timeWindowStartMinutes}分钟至前${timeWindowEndMinutes}分钟）`
+      `[INFO] 从飞书拉取数据：当前时间 ${currentTimeStr}，选取搭建时间在 ${windowStartStr}-${windowEndStr} 之间的账户（前${timeWindowStartMinutes}分钟至前${timeWindowEndMinutes}分钟）`,
     );
 
     // 解析为 AccountCfg 格式，并按 aadvid 去重（保留第一个出现的）
@@ -365,7 +424,7 @@ async function fetchAccountsFromFeishu(
         }
       } else {
         console.warn(
-          `[WARN] 飞书记录 record_id=${record.record_id} 缺少剧名或账户字段，已跳过`
+          `[WARN] 飞书记录 record_id=${record.record_id} 缺少剧名或账户字段，已跳过`,
         );
       }
     }
@@ -373,7 +432,7 @@ async function fetchAccountsFromFeishu(
     const accounts = Array.from(accountMap.values());
 
     console.log(
-      `[INFO] 从飞书多维表格拉取到 ${accounts.length} 条账户配置（Today: ${todayRecords.length}, Yesterday: ${yesterdayRecords.length}，时间过滤后: ${filteredCount}，因时间窗口外跳过: ${skippedByTimeCount}，去重后: ${accounts.length}）`
+      `[INFO] 从飞书多维表格拉取到 ${accounts.length} 条账户配置（表1-Today: ${table1TodayRecords.length}, 表1-Yesterday: ${table1YesterdayRecords.length}, 表2-Today: ${table2TodayRecords.length}, 表2-Yesterday: ${table2YesterdayRecords.length}，时间过滤后: ${filteredCount}，因时间窗口外跳过: ${skippedByTimeCount}，去重后: ${accounts.length}）`,
     );
 
     return accounts;
@@ -413,12 +472,12 @@ function resolveFeishuConfig(settings: SettingsCfg): FeishuConfig {
   const tableId = settings.tableId || DEFAULT_FEISHU_TABLE_ID;
   const baseUrl = (settings.baseUrl || DEFAULT_FEISHU_BASE_URL).replace(
     /\/$/,
-    ""
+    "",
   );
 
   if (!appId || !appSecret || !appToken || !tableId) {
     throw new Error(
-      "从飞书拉取账户配置需要配置 appId、appSecret、appToken、tableId"
+      "从飞书拉取账户配置需要配置 appId、appSecret、appToken、tableId",
     );
   }
 
@@ -446,7 +505,7 @@ async function withRetry<T>(
   runner: () => Promise<T>,
   label: string,
   retries = 3,
-  delayMs = 600
+  delayMs = 600,
 ): Promise<T> {
   // T 可以是 AxiosResponse<R>，函数会原样返回
   let lastErr: any;
@@ -457,7 +516,7 @@ async function withRetry<T>(
       lastErr = e;
       console.warn(
         `[WARN] ${label} 失败重试 ${i + 1}/${retries}:`,
-        e?.response?.status || e?.message
+        e?.response?.status || e?.message,
       );
       await sleep(delayMs * (i + 1));
     }
@@ -469,7 +528,7 @@ async function withRetry<T>(
 // =============== API 封装 ===============
 async function fetchAllAds(
   client: AxiosInstance,
-  aadvid: string
+  aadvid: string,
 ): Promise<AdItem[]> {
   const all: AdItem[] = [];
   let page = 1;
@@ -488,7 +547,7 @@ async function fetchAllAds(
         client.post<AdsListResp>(`/ad/api/promotion/ads/list`, body, {
           params: { aadvid },
         }),
-      `fetchAds(page=${page})`
+      `fetchAds(page=${page})`,
     );
     if (resp.data.code !== 0)
       throw new Error(`fetch ads code=${resp.data.code}, msg=${resp.data.msg}`);
@@ -504,7 +563,7 @@ async function fetchAllAds(
 function filterAndDedupAds(
   ads: AdItem[],
   dramaName: string,
-  awemeWhite: string[] = []
+  awemeWhite: string[] = [],
 ): AdItem[] {
   const includesDrama = (name: string) =>
     !!dramaName && name?.includes(dramaName);
@@ -526,7 +585,7 @@ function filterAndDedupAds(
     const ts = dayjs(
       ad.create_time ?? "",
       "YYYY-MM-DD HH:mm:ss",
-      true
+      true,
     ).valueOf();
     return Number.isFinite(ts) ? ts : 0;
   };
@@ -556,7 +615,7 @@ function filterAndDedupAds(
 
   // 可选：稳定输出，按 create_time 倒序返回
   return [...bestByAweme.values()].sort(
-    (a, b) => getCreateTs(b) - getCreateTs(a)
+    (a, b) => getCreateTs(b) - getCreateTs(a),
   );
 }
 function chunk<T>(arr: T[], size: number): T[][] {
@@ -569,7 +628,7 @@ async function fetchMaterialsByPromotions(
   client: AxiosInstance,
   aadvid: string,
   promotionIds: string[],
-  concurrency = 3
+  concurrency = 3,
 ): Promise<MaterialItem[]> {
   const limit = pLimit(concurrency);
   const results: MaterialItem[] = [];
@@ -612,13 +671,13 @@ async function fetchMaterialsByPromotions(
               client.post<MaterialsListResp>(
                 `/ad/api/promotion/materials/list`,
                 body,
-                { params: { aadvid } }
+                { params: { aadvid } },
               ),
-            `fetchMaterials(chunk#${ci}, page=${page})`
+            `fetchMaterials(chunk#${ci}, page=${page})`,
           );
           if (resp.data.code !== 0)
             throw new Error(
-              `fetch materials code=${resp.data.code}, msg=${resp.data.msg}`
+              `fetch materials code=${resp.data.code}, msg=${resp.data.msg}`,
             );
           const mats = resp.data.data?.materials ?? [];
           results.push(...mats);
@@ -626,8 +685,8 @@ async function fetchMaterialsByPromotions(
           if (!pg || page >= (pg.total_page || 1)) break;
           page++;
         }
-      })
-    )
+      }),
+    ),
   );
 
   return results;
@@ -650,14 +709,15 @@ function classifyMaterials(materials: MaterialItem[]) {
 
   const needPreview = materials.filter(
     (m) =>
-      isOnlyBalanceInsufficient(m) && (m.material_reject_reason_type ?? 0) === 0
+      isOnlyBalanceInsufficient(m) &&
+      (m.material_reject_reason_type ?? 0) === 0,
   );
 
   const needDelete = materials.filter(
     (m) =>
       (isOnlyBalanceInsufficient(m) &&
         (m.material_reject_reason_type ?? 0) === 1) ||
-      (containsRejectStatus(m) && (m.material_reject_reason_type ?? 0) === 1)
+      (containsRejectStatus(m) && (m.material_reject_reason_type ?? 0) === 1),
   );
 
   return { needPreview, needDelete };
@@ -665,13 +725,16 @@ function classifyMaterials(materials: MaterialItem[]) {
 
 function groupBy<T, K extends string | number>(
   arr: T[],
-  keyFn: (x: T) => K
+  keyFn: (x: T) => K,
 ): Record<K, T[]> {
-  return arr.reduce((acc, cur) => {
-    const k = keyFn(cur);
-    (acc[k] ||= []).push(cur);
-    return acc;
-  }, {} as Record<K, T[]>);
+  return arr.reduce(
+    (acc, cur) => {
+      const k = keyFn(cur);
+      (acc[k] ||= []).push(cur);
+      return acc;
+    },
+    {} as Record<K, T[]>,
+  );
 }
 
 function promotionsToDelete(materials: MaterialItem[]): string[] {
@@ -705,7 +768,7 @@ function promotionsToDelete(materials: MaterialItem[]): string[] {
     const anyPreview = mats.some(
       (m) =>
         isOnlyBalanceInsufficient(m) &&
-        (m.material_reject_reason_type ?? 0) === 0
+        (m.material_reject_reason_type ?? 0) === 0,
     );
 
     // 检查是否所有素材都应该被删除
@@ -741,7 +804,7 @@ async function previewOne(
   client: AxiosInstance,
   aadvid: string,
   materialId: string,
-  promotionId: string
+  promotionId: string,
 ) {
   const resp = await withRetry(
     () =>
@@ -754,7 +817,7 @@ async function previewOne(
         },
         headers: { "Accept-Encoding": "gzip, deflate, br" },
       }),
-    `preview(material=${materialId})`
+    `preview(material=${materialId})`,
   );
   const code = resp.data?.code ?? 0;
   if (code !== 0) throw new Error(`preview failed code=${code}`);
@@ -773,7 +836,7 @@ async function deleteMaterialsBatch(
   client: AxiosInstance,
   aadvid: string,
   promotionId: string,
-  cdpIds: string[]
+  cdpIds: string[],
 ) {
   const payload = { ids: cdpIds, promotion_id: promotionId };
   const resp = await withRetry(
@@ -781,7 +844,7 @@ async function deleteMaterialsBatch(
       client.post<DeleteResp>(`/superior/api/promote/materials/del`, payload, {
         params: { aadvid },
       }),
-    `deleteMaterials(promotion=${promotionId}, count=${cdpIds.length})`
+    `deleteMaterials(promotion=${promotionId}, count=${cdpIds.length})`,
   );
   const code = resp.data?.code ?? 0;
   if (code !== 0) throw new Error(`delete materials failed code=${code}`);
@@ -791,7 +854,7 @@ async function deleteMaterialsBatch(
 async function deletePromotion(
   client: AxiosInstance,
   aadvid: string,
-  promotionId: string
+  promotionId: string,
 ) {
   const payload = { ids: [promotionId] };
   const resp = await withRetry(
@@ -799,7 +862,7 @@ async function deletePromotion(
       client.post<DeleteResp>(`/ad/api/promotion/ads/delete`, payload, {
         params: { aadvid },
       }),
-    `deletePromotion(${promotionId})`
+    `deletePromotion(${promotionId})`,
   );
   const code = resp.data?.code ?? 0;
   if (code !== 0) throw new Error(`delete promotion failed code=${code}`);
@@ -812,18 +875,18 @@ async function runTask(settings: SettingsCfg) {
   let accounts: AccountCfg[];
   if (settings.accounts && settings.accounts.length > 0) {
     console.log(
-      `[INIT] 使用 settings.json 中的账户配置，共 ${settings.accounts.length} 条`
+      `[INIT] 使用 settings.json 中的账户配置，共 ${settings.accounts.length} 条`,
     );
     accounts = settings.accounts;
   } else {
     console.log(
-      "[INIT] settings.json 中的 accounts 为空，正在从飞书多维表格拉取账户配置..."
+      "[INIT] settings.json 中的 accounts 为空，正在从飞书多维表格拉取账户配置...",
     );
     const feishuCfg = resolveFeishuConfig(settings);
     accounts = await fetchAccountsFromFeishu(
       feishuCfg,
       settings.buildTimeFilterWindowStartMinutes || 50,
-      settings.buildTimeFilterWindowEndMinutes || 30
+      settings.buildTimeFilterWindowEndMinutes || 30,
     );
     if (!accounts.length) {
       throw new Error("从飞书拉取的账户配置为空，请检查多维表格数据");
@@ -837,7 +900,7 @@ async function runTask(settings: SettingsCfg) {
       settings.previewDelayMs
     }, fetchConcurrency=${settings.fetchConcurrency}, proxyUrl=${
       settings.proxyUrl || "none"
-    }, 账户数量=${accounts.length}`
+    }, 账户数量=${accounts.length}`,
   );
 
   for (const account of accounts) {
@@ -847,13 +910,13 @@ async function runTask(settings: SettingsCfg) {
     const accountCookie = account.cookie || settings.cookie;
     if (!accountCookie) {
       throw new Error(
-        `账户 ${aadvid} 未配置 cookie，请在账户配置或全局配置中添加 cookie`
+        `账户 ${aadvid} 未配置 cookie，请在账户配置或全局配置中添加 cookie`,
       );
     }
 
     const client = createClient(accountCookie, settings.proxyUrl);
     console.log(
-      `\n===== 账户 aadvid=${aadvid} 剧名="${drama_name}" 开始 =====`
+      `\n===== 账户 aadvid=${aadvid} 剧名="${drama_name}" 开始 =====`,
     );
 
     // 1) 拉取广告
@@ -864,10 +927,10 @@ async function runTask(settings: SettingsCfg) {
     const adsFiltered = filterAndDedupAds(
       adsAll,
       drama_name,
-      settings.aweme_white_list
+      settings.aweme_white_list,
     );
     console.log(
-      `[INFO] 过滤后广告数=${adsFiltered.length}（按剧名过滤 + 全局抖音号白名单去重）`
+      `[INFO] 过滤后广告数=${adsFiltered.length}（按剧名过滤 + 全局抖音号白名单去重）`,
     );
 
     if (!adsFiltered.length) {
@@ -881,14 +944,14 @@ async function runTask(settings: SettingsCfg) {
       client,
       aadvid,
       promotionIds,
-      settings.fetchConcurrency
+      settings.fetchConcurrency,
     );
     console.log(`[INFO] 拉取素材总数=${mats.length}`);
 
     // 4) 分类
     const { needPreview, needDelete } = classifyMaterials(mats);
     console.log(
-      `[INFO] 需预览=${needPreview.length}, 需删除素材=${needDelete.length}`
+      `[INFO] 需预览=${needPreview.length}, 需删除素材=${needDelete.length}`,
     );
 
     // 5) 整单删除广告判断
@@ -898,13 +961,13 @@ async function runTask(settings: SettingsCfg) {
     // 5.1) 过滤：整单删除的广告，其下的素材无需处理
     const canDeletePromotionSet = new Set(canDeletePromotions);
     const filteredNeedPreview = needPreview.filter(
-      (m) => !canDeletePromotionSet.has(m.promotion_id)
+      (m) => !canDeletePromotionSet.has(m.promotion_id),
     );
     const filteredNeedDelete = needDelete.filter(
-      (m) => !canDeletePromotionSet.has(m.promotion_id)
+      (m) => !canDeletePromotionSet.has(m.promotion_id),
     );
     console.log(
-      `[INFO] 过滤后：需预览=${filteredNeedPreview.length}, 需删除素材=${filteredNeedDelete.length} (已排除整单删除广告的素材)`
+      `[INFO] 过滤后：需预览=${filteredNeedPreview.length}, 需删除素材=${filteredNeedDelete.length} (已排除整单删除广告的素材)`,
     );
 
     // 6) 执行动作
@@ -918,7 +981,7 @@ async function runTask(settings: SettingsCfg) {
             promotion_id: m.promotion_id,
           }))
           .slice(0, 20),
-        filteredNeedPreview.length > 20 ? "..." : ""
+        filteredNeedPreview.length > 20 ? "..." : "",
       );
       console.log(
         `- 删除素材(分广告)：`,
@@ -926,8 +989,8 @@ async function runTask(settings: SettingsCfg) {
           ([pid, arr]) => ({
             promotion_id: pid,
             ids: arr.map((m) => m.cdp_material_id),
-          })
-        )
+          }),
+        ),
       );
       console.log(`- 整单删除广告：`, canDeletePromotions);
       continue;
@@ -938,12 +1001,12 @@ async function runTask(settings: SettingsCfg) {
       try {
         await previewOne(client, aadvid, m.material_id, m.promotion_id);
         console.log(
-          `[OK] 预览成功 material=${m.material_id} promotion=${m.promotion_id}`
+          `[OK] 预览成功 material=${m.material_id} promotion=${m.promotion_id}`,
         );
       } catch (e: any) {
         console.error(
           `[FAIL] 预览失败 material=${m.material_id} promotion=${m.promotion_id}:`,
-          e?.response?.status || e?.message
+          e?.response?.status || e?.message,
         );
       }
       await sleep(settings.previewDelayMs || 400);
@@ -952,7 +1015,7 @@ async function runTask(settings: SettingsCfg) {
     // 6.2 删除素材（按广告批量）
     const delGroups = groupBy(
       filteredNeedDelete.filter((m) => !!m.cdp_material_id),
-      (m) => m.promotion_id
+      (m) => m.promotion_id,
     );
     for (const [pid, arr] of Object.entries(delGroups)) {
       const ids = arr.map((m) => m.cdp_material_id!).filter(Boolean);
@@ -963,7 +1026,7 @@ async function runTask(settings: SettingsCfg) {
       } catch (e: any) {
         console.error(
           `[FAIL] 删除素材失败 promotion=${pid}:`,
-          e?.response?.status || e?.message
+          e?.response?.status || e?.message,
         );
       }
       await sleep(300);
@@ -977,7 +1040,7 @@ async function runTask(settings: SettingsCfg) {
       } catch (e: any) {
         console.error(
           `[FAIL] 删除广告失败 promotion=${pid}:`,
-          e?.response?.status || e?.message
+          e?.response?.status || e?.message,
         );
       }
       await sleep(300);
@@ -1003,7 +1066,7 @@ async function run() {
     let shouldStop = false; // 停止标志
 
     console.log(
-      `[SCHEDULER] 已启用定时执行模式，每隔 ${scheduleIntervalMinutes} 分钟执行一次`
+      `[SCHEDULER] 已启用定时执行模式，每隔 ${scheduleIntervalMinutes} 分钟执行一次`,
     );
     console.log(`[SCHEDULER] ${new Date().toLocaleString()} 立即执行首次任务`);
 
@@ -1017,7 +1080,7 @@ async function run() {
       // 如果上一个任务还在执行，跳过本次执行
       if (isRunning) {
         console.log(
-          `[SCHEDULER] 上次任务仍在执行中，跳过本次执行。将在 ${scheduleIntervalMinutes} 分钟后重试`
+          `[SCHEDULER] 上次任务仍在执行中，跳过本次执行。将在 ${scheduleIntervalMinutes} 分钟后重试`,
         );
         scheduleNext();
         return;
@@ -1028,22 +1091,22 @@ async function run() {
 
       try {
         console.log(
-          `\n[SCHEDULER] ${new Date().toLocaleString()} 开始执行任务...`
+          `\n[SCHEDULER] ${new Date().toLocaleString()} 开始执行任务...`,
         );
         await runTask(settings);
         const taskDuration = ((Date.now() - taskStartTime) / 1000 / 60).toFixed(
-          2
+          2,
         );
         console.log(
-          `[SCHEDULER] ${new Date().toLocaleString()} 任务执行完成，耗时 ${taskDuration} 分钟`
+          `[SCHEDULER] ${new Date().toLocaleString()} 任务执行完成，耗时 ${taskDuration} 分钟`,
         );
       } catch (e: any) {
         const taskDuration = ((Date.now() - taskStartTime) / 1000 / 60).toFixed(
-          2
+          2,
         );
         console.error(
           `[SCHEDULER] 任务执行失败（耗时 ${taskDuration} 分钟）:`,
-          e?.response?.data || e?.message || e
+          e?.response?.data || e?.message || e,
         );
       } finally {
         isRunning = false;
@@ -1071,7 +1134,7 @@ async function run() {
       if (shouldStop) return;
       const nextTime = new Date(Date.now() + intervalMs);
       console.log(
-        `[SCHEDULER] 下次执行时间：${nextTime.toLocaleString()}（${scheduleIntervalMinutes} 分钟后）`
+        `[SCHEDULER] 下次执行时间：${nextTime.toLocaleString()}（${scheduleIntervalMinutes} 分钟后）`,
       );
       timeoutId = setTimeout(executeTask, intervalMs);
     };
