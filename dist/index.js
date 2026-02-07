@@ -157,12 +157,12 @@ async function fetchAccountsFromFeishu(feishuCfg, timeWindowStartMinutes, timeWi
             fetchFeishuRecords(`${baseUrl}/apps/${feishuCfg.appToken}/tables/${TABLE_ID_2}/records/search`, FEISHU_TOKEN, payloads2.todayPayload),
             fetchFeishuRecords(`${baseUrl}/apps/${feishuCfg.appToken}/tables/${TABLE_ID_2}/records/search`, FEISHU_TOKEN, payloads2.yesterdayPayload),
         ]);
-        // 合并所有数据
+        // 合并所有数据，并标记来源表 ID
         const allRecords = [
-            ...table1TodayRecords,
-            ...table1YesterdayRecords,
-            ...table2TodayRecords,
-            ...table2YesterdayRecords,
+            ...table1TodayRecords.map((r) => ({ ...r, _tableId: TABLE_ID_1 })),
+            ...table1YesterdayRecords.map((r) => ({ ...r, _tableId: TABLE_ID_1 })),
+            ...table2TodayRecords.map((r) => ({ ...r, _tableId: TABLE_ID_2 })),
+            ...table2YesterdayRecords.map((r) => ({ ...r, _tableId: TABLE_ID_2 })),
         ];
         // 调试：输出前3条记录的完整结构
         // if (allRecords.length > 0) {
@@ -209,6 +209,7 @@ async function fetchAccountsFromFeishu(feishuCfg, timeWindowStartMinutes, timeWi
                         aadvid: accountId,
                         drama_name: dramaName,
                         buildTime: buildTime,
+                        tableId: record._tableId,
                     });
                     filteredCount++;
                 }
@@ -528,19 +529,36 @@ async function runTask(settings) {
     }
     const dryRun = !!settings.dryRun;
     console.log(`[INIT] dryRun=${dryRun}, previewDelayMs=${settings.previewDelayMs}, fetchConcurrency=${settings.fetchConcurrency}, proxyUrl=${settings.proxyUrl || "none"}, 账户数量=${accounts.length}`);
-    // 打印本轮待处理的所有账户和剧集
-    console.log(`[INFO] 本轮待处理账户列表：`);
-    accounts.forEach((acc, idx) => {
-        const status = processedAccountIds.has(acc.aadvid) ? "（已处理）" : "";
-        const buildTimeStr = acc.buildTime
-            ? new Date(acc.buildTime).toLocaleString("zh-CN", {
-                hour: "2-digit",
-                minute: "2-digit",
-                second: "2-digit",
-            })
-            : "未知";
-        console.log(`  ${idx + 1}. aadvid=${acc.aadvid} 剧名="${acc.drama_name}" 搭建时间=${buildTimeStr}${status}`);
-    });
+    // 打印本轮待处理的所有账户和剧集（按表分组）
+    const tableNameMap = {
+        [TABLE_ID_1]: "每日表格",
+        [TABLE_ID_2]: "牵龙表格",
+    };
+    const formatBuildTime = (ts) => ts
+        ? new Date(ts).toLocaleString("zh-CN", {
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+        })
+        : "未知";
+    // 按表 ID 分组
+    const accountsByTable = new Map();
+    for (const acc of accounts) {
+        const tableId = acc.tableId || "unknown";
+        if (!accountsByTable.has(tableId)) {
+            accountsByTable.set(tableId, []);
+        }
+        accountsByTable.get(tableId).push(acc);
+    }
+    console.log(`[INFO] 本轮待处理账户列表（共 ${accounts.length} 个）：`);
+    for (const [tableId, tableAccounts] of accountsByTable) {
+        const tableName = tableNameMap[tableId] || tableId;
+        console.log(`  【${tableName}】(${tableAccounts.length} 个):`);
+        tableAccounts.forEach((acc, idx) => {
+            const status = processedAccountIds.has(acc.aadvid) ? "（已处理）" : "";
+            console.log(`    ${idx + 1}. aadvid=${acc.aadvid} 剧名="${acc.drama_name}" 搭建时间=${formatBuildTime(acc.buildTime)}${status}`);
+        });
+    }
     // 检查是否所有账户都已处理过，如果是则清空记录重新开始
     const allProcessed = accounts.every((acc) => processedAccountIds.has(acc.aadvid));
     if (allProcessed && accounts.length > 0) {

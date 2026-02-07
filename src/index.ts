@@ -30,6 +30,7 @@ interface AccountCfg {
   drama_name: string; // 单个剧名，用于匹配 promotion_name
   cookie?: string; // 针对账户的 cookie（可覆盖全局 cookie）
   buildTime?: number; // 搭建时间（毫秒时间戳）
+  tableId?: string; // 来源表 ID
 }
 
 interface SettingsCfg {
@@ -356,12 +357,12 @@ async function fetchAccountsFromFeishu(
       ),
     ]);
 
-    // 合并所有数据
+    // 合并所有数据，并标记来源表 ID
     const allRecords = [
-      ...table1TodayRecords,
-      ...table1YesterdayRecords,
-      ...table2TodayRecords,
-      ...table2YesterdayRecords,
+      ...table1TodayRecords.map((r) => ({ ...r, _tableId: TABLE_ID_1 })),
+      ...table1YesterdayRecords.map((r) => ({ ...r, _tableId: TABLE_ID_1 })),
+      ...table2TodayRecords.map((r) => ({ ...r, _tableId: TABLE_ID_2 })),
+      ...table2YesterdayRecords.map((r) => ({ ...r, _tableId: TABLE_ID_2 })),
     ];
 
     // 调试：输出前3条记录的完整结构
@@ -421,6 +422,7 @@ async function fetchAccountsFromFeishu(
             aadvid: accountId,
             drama_name: dramaName,
             buildTime: buildTime,
+            tableId: (record as any)._tableId,
           });
           filteredCount++;
         }
@@ -908,21 +910,41 @@ async function runTask(settings: SettingsCfg) {
     }, 账户数量=${accounts.length}`,
   );
 
-  // 打印本轮待处理的所有账户和剧集
-  console.log(`[INFO] 本轮待处理账户列表：`);
-  accounts.forEach((acc, idx) => {
-    const status = processedAccountIds.has(acc.aadvid) ? "（已处理）" : "";
-    const buildTimeStr = acc.buildTime
-      ? new Date(acc.buildTime).toLocaleString("zh-CN", {
+  // 打印本轮待处理的所有账户和剧集（按表分组）
+  const tableNameMap: Record<string, string> = {
+    [TABLE_ID_1]: "每日表格",
+    [TABLE_ID_2]: "牵龙表格",
+  };
+  const formatBuildTime = (ts?: number) =>
+    ts
+      ? new Date(ts).toLocaleString("zh-CN", {
           hour: "2-digit",
           minute: "2-digit",
           second: "2-digit",
         })
       : "未知";
-    console.log(
-      `  ${idx + 1}. aadvid=${acc.aadvid} 剧名="${acc.drama_name}" 搭建时间=${buildTimeStr}${status}`,
-    );
-  });
+
+  // 按表 ID 分组
+  const accountsByTable = new Map<string, AccountCfg[]>();
+  for (const acc of accounts) {
+    const tableId = acc.tableId || "unknown";
+    if (!accountsByTable.has(tableId)) {
+      accountsByTable.set(tableId, []);
+    }
+    accountsByTable.get(tableId)!.push(acc);
+  }
+
+  console.log(`[INFO] 本轮待处理账户列表（共 ${accounts.length} 个）：`);
+  for (const [tableId, tableAccounts] of accountsByTable) {
+    const tableName = tableNameMap[tableId] || tableId;
+    console.log(`  【${tableName}】(${tableAccounts.length} 个):`);
+    tableAccounts.forEach((acc, idx) => {
+      const status = processedAccountIds.has(acc.aadvid) ? "（已处理）" : "";
+      console.log(
+        `    ${idx + 1}. aadvid=${acc.aadvid} 剧名="${acc.drama_name}" 搭建时间=${formatBuildTime(acc.buildTime)}${status}`,
+      );
+    });
+  }
 
   // 检查是否所有账户都已处理过，如果是则清空记录重新开始
   const allProcessed = accounts.every((acc) =>
