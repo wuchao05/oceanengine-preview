@@ -72,13 +72,16 @@ async function fetchFeishuRecords(url, token, payload) {
     } while (pageToken);
     return allRecords;
 }
-// 从飞书多维表格拉取账户和剧名数据
+// 定义两个表的 ID
+const TABLE_ID_1 = "tblJcLhLpEkmFkga";
+const TABLE_ID_2 = "tblZB1ujNLN7Onpl";
+// 从飞书多维表格拉取账户和剧名数据（支持两个表合并）
 async function fetchAccountsFromFeishu(feishuCfg, timeWindowStartMinutes, timeWindowEndMinutes) {
     const baseUrl = (feishuCfg.baseUrl || DEFAULT_FEISHU_BASE_URL).replace(/\/$/, "");
-    const FEISHU_API_URL = `${baseUrl}/apps/${feishuCfg.appToken}/tables/${feishuCfg.tableId}/records/search`;
     // 在查询前获取最新的 token
     const FEISHU_TOKEN = await fetchFeishuToken(feishuCfg.appId, feishuCfg.appSecret);
-    const basePayload = {
+    // 构建基础 payload（表1）
+    const basePayload1 = {
         field_names: ["剧名", "账户", "日期", "当前状态", "搭建时间"],
         page_size: 100,
         filter: {
@@ -92,44 +95,75 @@ async function fetchAccountsFromFeishu(feishuCfg, timeWindowStartMinutes, timeWi
             ],
         },
     };
-    // 拉取 Today 的数据
-    const todayPayload = {
-        ...basePayload,
+    // 构建基础 payload（表2，需要额外过滤"主体"="每日"）
+    const basePayload2 = {
+        field_names: ["剧名", "账户", "日期", "当前状态", "搭建时间", "主体"],
+        page_size: 100,
         filter: {
-            ...basePayload.filter,
+            conjunction: "and",
             conditions: [
-                ...basePayload.filter.conditions,
                 {
-                    field_name: "日期",
+                    field_name: "当前状态",
                     operator: "is",
-                    value: ["Today"],
+                    value: ["已完成"],
+                },
+                {
+                    field_name: "主体",
+                    operator: "is",
+                    value: ["每日"],
                 },
             ],
         },
     };
-    // 拉取 Yesterday 的数据
-    const yesterdayPayload = {
-        ...basePayload,
-        filter: {
-            ...basePayload.filter,
-            conditions: [
-                ...basePayload.filter.conditions,
-                {
-                    field_name: "日期",
-                    operator: "is",
-                    value: ["Yesterday"],
-                },
-            ],
-        },
+    // 辅助函数：为单个表创建 Today 和 Yesterday 的 payload
+    const createPayloads = (basePayload) => {
+        const todayPayload = {
+            ...basePayload,
+            filter: {
+                ...basePayload.filter,
+                conditions: [
+                    ...basePayload.filter.conditions,
+                    {
+                        field_name: "日期",
+                        operator: "is",
+                        value: ["Today"],
+                    },
+                ],
+            },
+        };
+        const yesterdayPayload = {
+            ...basePayload,
+            filter: {
+                ...basePayload.filter,
+                conditions: [
+                    ...basePayload.filter.conditions,
+                    {
+                        field_name: "日期",
+                        operator: "is",
+                        value: ["Yesterday"],
+                    },
+                ],
+            },
+        };
+        return { todayPayload, yesterdayPayload };
     };
+    const payloads1 = createPayloads(basePayload1);
+    const payloads2 = createPayloads(basePayload2);
     try {
-        // 并行请求两次（自动处理分页）
-        const [todayRecords, yesterdayRecords] = await Promise.all([
-            fetchFeishuRecords(FEISHU_API_URL, FEISHU_TOKEN, todayPayload),
-            fetchFeishuRecords(FEISHU_API_URL, FEISHU_TOKEN, yesterdayPayload),
+        // 并行请求两个表（每个表有 Today 和 Yesterday 两个查询）
+        const [table1TodayRecords, table1YesterdayRecords, table2TodayRecords, table2YesterdayRecords,] = await Promise.all([
+            fetchFeishuRecords(`${baseUrl}/apps/${feishuCfg.appToken}/tables/${TABLE_ID_1}/records/search`, FEISHU_TOKEN, payloads1.todayPayload),
+            fetchFeishuRecords(`${baseUrl}/apps/${feishuCfg.appToken}/tables/${TABLE_ID_1}/records/search`, FEISHU_TOKEN, payloads1.yesterdayPayload),
+            fetchFeishuRecords(`${baseUrl}/apps/${feishuCfg.appToken}/tables/${TABLE_ID_2}/records/search`, FEISHU_TOKEN, payloads2.todayPayload),
+            fetchFeishuRecords(`${baseUrl}/apps/${feishuCfg.appToken}/tables/${TABLE_ID_2}/records/search`, FEISHU_TOKEN, payloads2.yesterdayPayload),
         ]);
-        // 合并两次的数据
-        const allRecords = [...todayRecords, ...yesterdayRecords];
+        // 合并所有数据
+        const allRecords = [
+            ...table1TodayRecords,
+            ...table1YesterdayRecords,
+            ...table2TodayRecords,
+            ...table2YesterdayRecords,
+        ];
         // 调试：输出前3条记录的完整结构
         // if (allRecords.length > 0) {
         //   console.log(`[DEBUG] 飞书返回的前3条记录完整结构:`);
@@ -183,7 +217,7 @@ async function fetchAccountsFromFeishu(feishuCfg, timeWindowStartMinutes, timeWi
             }
         }
         const accounts = Array.from(accountMap.values());
-        console.log(`[INFO] 从飞书多维表格拉取到 ${accounts.length} 条账户配置（Today: ${todayRecords.length}, Yesterday: ${yesterdayRecords.length}，时间过滤后: ${filteredCount}，因时间窗口外跳过: ${skippedByTimeCount}，去重后: ${accounts.length}）`);
+        console.log(`[INFO] 从飞书多维表格拉取到 ${accounts.length} 条账户配置（表1-Today: ${table1TodayRecords.length}, 表1-Yesterday: ${table1YesterdayRecords.length}, 表2-Today: ${table2TodayRecords.length}, 表2-Yesterday: ${table2YesterdayRecords.length}，时间过滤后: ${filteredCount}，因时间窗口外跳过: ${skippedByTimeCount}，去重后: ${accounts.length}）`);
         return accounts;
     }
     catch (error) {
@@ -386,8 +420,16 @@ function classifyMaterials(materials) {
         const secondNames = ensureArr(m.material_status_second_name);
         return secondNames.length === 1 && secondNames[0] === "账户余额不足";
     };
-    const needPreview = materials.filter((m) => isOnlyBalanceInsufficient(m) && (m.material_reject_reason_type ?? 0) === 0);
-    const needDelete = materials.filter((m) => isOnlyBalanceInsufficient(m) && (m.material_reject_reason_type ?? 0) === 1);
+    // 判断 material_status_second_name 是否包含"审核不通过"
+    const containsRejectStatus = (m) => {
+        const secondNames = ensureArr(m.material_status_second_name);
+        return secondNames.includes("审核不通过");
+    };
+    const needPreview = materials.filter((m) => isOnlyBalanceInsufficient(m) &&
+        (m.material_reject_reason_type ?? 0) === 0);
+    const needDelete = materials.filter((m) => (isOnlyBalanceInsufficient(m) &&
+        (m.material_reject_reason_type ?? 0) === 1) ||
+        (containsRejectStatus(m) && (m.material_reject_reason_type ?? 0) === 1));
     return { needPreview, needDelete };
 }
 function groupBy(arr, keyFn) {
@@ -404,16 +446,27 @@ function promotionsToDelete(materials) {
         const secondNames = ensureArr(m.material_status_second_name);
         return secondNames.length === 1 && secondNames[0] === "账户余额不足";
     };
+    // 判断 material_status_second_name 是否包含"审核不通过"
+    const containsRejectStatus = (m) => {
+        const secondNames = ensureArr(m.material_status_second_name);
+        return secondNames.includes("审核不通过");
+    };
+    // 判断素材是否应该被删除
+    const shouldDelete = (m) => {
+        return ((isOnlyBalanceInsufficient(m) &&
+            (m.material_reject_reason_type ?? 0) === 1) ||
+            (containsRejectStatus(m) && (m.material_reject_reason_type ?? 0) === 1));
+    };
     const byPromotion = groupBy(materials, (m) => m.promotion_id);
     const toDelete = [];
     for (const [pid, mats] of Object.entries(byPromotion)) {
         // 检查是否有需要预览的素材（只包含"账户余额不足" + reject_reason_type = 0）
         const anyPreview = mats.some((m) => isOnlyBalanceInsufficient(m) &&
             (m.material_reject_reason_type ?? 0) === 0);
-        // 检查是否所有素材的 material_status_second_name 只包含"账户余额不足"
-        const allOnlyBalanceInsufficient = mats.every((m) => isOnlyBalanceInsufficient(m));
-        // 如果既无需预览素材，且所有素材都只包含"账户余额不足"，则整单删除
-        if (!anyPreview && allOnlyBalanceInsufficient) {
+        // 检查是否所有素材都应该被删除
+        const allShouldDelete = mats.every((m) => shouldDelete(m));
+        // 如果既无需预览素材，且所有素材都应该被删除，则整单删除
+        if (!anyPreview && allShouldDelete) {
             toDelete.push(pid);
         }
     }
@@ -455,6 +508,8 @@ async function deletePromotion(client, aadvid, promotionId) {
     return resp.data;
 }
 // =============== 主流程 ===============
+// 记录已处理过的账户 ID 集合，避免重复处理同一个账户
+const processedAccountIds = new Set();
 async function runTask(settings) {
     // 兼容逻辑：如果 settings.json 中的 accounts 不为空，优先使用；否则从飞书获取
     let accounts;
@@ -472,8 +527,19 @@ async function runTask(settings) {
     }
     const dryRun = !!settings.dryRun;
     console.log(`[INIT] dryRun=${dryRun}, previewDelayMs=${settings.previewDelayMs}, fetchConcurrency=${settings.fetchConcurrency}, proxyUrl=${settings.proxyUrl || "none"}, 账户数量=${accounts.length}`);
+    // 检查是否所有账户都已处理过，如果是则清空记录重新开始
+    const allProcessed = accounts.every((acc) => processedAccountIds.has(acc.aadvid));
+    if (allProcessed && accounts.length > 0) {
+        console.log(`[INFO] 所有 ${accounts.length} 个账户都已处理过，清空记录重新开始`);
+        processedAccountIds.clear();
+    }
     for (const account of accounts) {
         const { aadvid, drama_name } = account; // 账户与剧名一一对应（单值）
+        // 跳过已处理过的账户（避免重复处理同一个账户）
+        if (processedAccountIds.has(aadvid)) {
+            console.log(`[INFO] 账户 aadvid=${aadvid} 已在之前的轮询中处理过，本次跳过`);
+            continue;
+        }
         // 优先使用账户级别的 cookie，否则使用全局 cookie
         const accountCookie = account.cookie || settings.cookie;
         if (!accountCookie) {
@@ -495,6 +561,17 @@ async function runTask(settings) {
         const promotionIds = adsFiltered.map((a) => a.promotion_id);
         const mats = await fetchMaterialsByPromotions(client, aadvid, promotionIds, settings.fetchConcurrency);
         console.log(`[INFO] 拉取素材总数=${mats.length}`);
+        // 3.1) 检查是否有"新建审核中"状态的素材，如果有则跳过该账户
+        const hasReviewingMaterial = mats.some((m) => {
+            const secondNames = Array.isArray(m.material_status_second_name)
+                ? m.material_status_second_name
+                : [];
+            return secondNames.includes("新建审核中");
+        });
+        if (hasReviewingMaterial) {
+            console.log(`[INFO] 账户 aadvid=${aadvid} 存在"新建审核中"状态的素材，跳过本次处理`);
+            continue;
+        }
         // 4) 分类
         const { needPreview, needDelete } = classifyMaterials(mats);
         console.log(`[INFO] 需预览=${needPreview.length}, 需删除素材=${needDelete.length}`);
@@ -520,7 +597,10 @@ async function runTask(settings) {
                 ids: arr.map((m) => m.cdp_material_id),
             })));
             console.log(`- 整单删除广告：`, canDeletePromotions);
-            continue;
+            // dryRun 模式下也记录本次处理的账户，并退出循环
+            processedAccountIds.add(aadvid);
+            console.log(`[INFO] 本次轮询已处理账户 aadvid=${aadvid}（dryRun模式），退出循环等待下次轮询`);
+            break;
         }
         // 6.1 预览（必须串行）
         for (const m of filteredNeedPreview) {
@@ -560,8 +640,12 @@ async function runTask(settings) {
             await sleep(300);
         }
         console.log(`===== 账户 aadvid=${aadvid} 结束 =====\n`);
+        // 记录本次处理的账户，并退出循环（每次轮询只处理一个账户）
+        processedAccountIds.add(aadvid);
+        console.log(`[INFO] 本次轮询已处理账户 aadvid=${aadvid}，退出循环等待下次轮询`);
+        break;
     }
-    console.log("[DONE] 全部账户处理完成");
+    console.log("[DONE] 本次轮询处理完成");
 }
 async function run() {
     const { configPath } = parseArgs();

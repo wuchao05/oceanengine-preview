@@ -870,6 +870,9 @@ async function deletePromotion(
 }
 
 // =============== 主流程 ===============
+// 记录已处理过的账户 ID 集合，避免重复处理同一个账户
+const processedAccountIds = new Set<string>();
+
 async function runTask(settings: SettingsCfg) {
   // 兼容逻辑：如果 settings.json 中的 accounts 不为空，优先使用；否则从飞书获取
   let accounts: AccountCfg[];
@@ -903,8 +906,27 @@ async function runTask(settings: SettingsCfg) {
     }, 账户数量=${accounts.length}`,
   );
 
+  // 检查是否所有账户都已处理过，如果是则清空记录重新开始
+  const allProcessed = accounts.every((acc) =>
+    processedAccountIds.has(acc.aadvid),
+  );
+  if (allProcessed && accounts.length > 0) {
+    console.log(
+      `[INFO] 所有 ${accounts.length} 个账户都已处理过，清空记录重新开始`,
+    );
+    processedAccountIds.clear();
+  }
+
   for (const account of accounts) {
     const { aadvid, drama_name } = account; // 账户与剧名一一对应（单值）
+
+    // 跳过已处理过的账户（避免重复处理同一个账户）
+    if (processedAccountIds.has(aadvid)) {
+      console.log(
+        `[INFO] 账户 aadvid=${aadvid} 已在之前的轮询中处理过，本次跳过`,
+      );
+      continue;
+    }
 
     // 优先使用账户级别的 cookie，否则使用全局 cookie
     const accountCookie = account.cookie || settings.cookie;
@@ -947,6 +969,20 @@ async function runTask(settings: SettingsCfg) {
       settings.fetchConcurrency,
     );
     console.log(`[INFO] 拉取素材总数=${mats.length}`);
+
+    // 3.1) 检查是否有"新建审核中"状态的素材，如果有则跳过该账户
+    const hasReviewingMaterial = mats.some((m) => {
+      const secondNames = Array.isArray(m.material_status_second_name)
+        ? m.material_status_second_name
+        : [];
+      return secondNames.includes("新建审核中");
+    });
+    if (hasReviewingMaterial) {
+      console.log(
+        `[INFO] 账户 aadvid=${aadvid} 存在"新建审核中"状态的素材，跳过本次处理`,
+      );
+      continue;
+    }
 
     // 4) 分类
     const { needPreview, needDelete } = classifyMaterials(mats);
@@ -993,7 +1029,12 @@ async function runTask(settings: SettingsCfg) {
         ),
       );
       console.log(`- 整单删除广告：`, canDeletePromotions);
-      continue;
+      // dryRun 模式下也记录本次处理的账户，并退出循环
+      processedAccountIds.add(aadvid);
+      console.log(
+        `[INFO] 本次轮询已处理账户 aadvid=${aadvid}（dryRun模式），退出循环等待下次轮询`,
+      );
+      break;
     }
 
     // 6.1 预览（必须串行）
@@ -1047,9 +1088,16 @@ async function runTask(settings: SettingsCfg) {
     }
 
     console.log(`===== 账户 aadvid=${aadvid} 结束 =====\n`);
+
+    // 记录本次处理的账户，并退出循环（每次轮询只处理一个账户）
+    processedAccountIds.add(aadvid);
+    console.log(
+      `[INFO] 本次轮询已处理账户 aadvid=${aadvid}，退出循环等待下次轮询`,
+    );
+    break;
   }
 
-  console.log("[DONE] 全部账户处理完成");
+  console.log("[DONE] 本次轮询处理完成");
 }
 
 async function run() {
