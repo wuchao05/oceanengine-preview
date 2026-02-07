@@ -28,8 +28,8 @@
     "微微看剧",
     "葸辉剧场"
   ],
-  "buildTimeFilterWindowStartMinutes": 90,
+  "buildTimeFilterWindowStartMinutes": 60,
   "buildTimeFilterWindowEndMinutes": 20,
-  "scheduleIntervalMinutes": 50,
+  "scheduleIntervalMinutes": 10,
   "accounts": []
 }
