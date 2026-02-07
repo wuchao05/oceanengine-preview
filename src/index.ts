@@ -29,6 +29,7 @@ interface AccountCfg {
   aadvid: string; // 广告主ID（与剧名一一对应）
   drama_name: string; // 单个剧名，用于匹配 promotion_name
   cookie?: string; // 针对账户的 cookie（可覆盖全局 cookie）
+  buildTime?: number; // 搭建时间（毫秒时间戳）
 }
 
 interface SettingsCfg {
@@ -419,6 +420,7 @@ async function fetchAccountsFromFeishu(
           accountMap.set(accountId, {
             aadvid: accountId,
             drama_name: dramaName,
+            buildTime: buildTime,
           });
           filteredCount++;
         }
@@ -910,7 +912,16 @@ async function runTask(settings: SettingsCfg) {
   console.log(`[INFO] 本轮待处理账户列表：`);
   accounts.forEach((acc, idx) => {
     const status = processedAccountIds.has(acc.aadvid) ? "（已处理）" : "";
-    console.log(`  ${idx + 1}. aadvid=${acc.aadvid} 剧名="${acc.drama_name}"${status}`);
+    const buildTimeStr = acc.buildTime
+      ? new Date(acc.buildTime).toLocaleString("zh-CN", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        })
+      : "未知";
+    console.log(
+      `  ${idx + 1}. aadvid=${acc.aadvid} 剧名="${acc.drama_name}" 搭建时间=${buildTimeStr}${status}`,
+    );
   });
 
   // 检查是否所有账户都已处理过，如果是则清空记录重新开始
