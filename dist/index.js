@@ -527,6 +527,12 @@ async function runTask(settings) {
     }
     const dryRun = !!settings.dryRun;
     console.log(`[INIT] dryRun=${dryRun}, previewDelayMs=${settings.previewDelayMs}, fetchConcurrency=${settings.fetchConcurrency}, proxyUrl=${settings.proxyUrl || "none"}, 账户数量=${accounts.length}`);
+    // 打印本轮待处理的所有账户和剧集
+    console.log(`[INFO] 本轮待处理账户列表：`);
+    accounts.forEach((acc, idx) => {
+        const status = processedAccountIds.has(acc.aadvid) ? "（已处理）" : "";
+        console.log(`  ${idx + 1}. aadvid=${acc.aadvid} 剧名="${acc.drama_name}"${status}`);
+    });
     // 检查是否所有账户都已处理过，如果是则清空记录重新开始
     const allProcessed = accounts.every((acc) => processedAccountIds.has(acc.aadvid));
     if (allProcessed && accounts.length > 0) {
