@@ -30,7 +30,7 @@ HTTP_PORT=3200 pnpm dev
 - `src/preview-service.ts`：预览核心逻辑
 - `src/preview-manager.ts`：多用户定时预览管理器
 - `src/http-server.ts`：独立 HTTP 服务入口
-- `config/users/feishu-*.json`：用户飞书配置
+- `config/users/`：飞书配置，当前会优先尝试按 `user + channel` 解析，找不到时回退到用户级配置
 
 ## 主要接口
 
@@ -81,7 +81,6 @@ http://127.0.0.1:3100
 可选参数：
 
 - `aweme_white_list: string[]`：抖音号白名单
-- `tableId: string`：来源飞书表 ID，仅做透传保留
 
 请求示例：
 
@@ -109,7 +108,6 @@ curl -X POST http://127.0.0.1:3100/preview/analyze \
 可选参数：
 
 - `aweme_white_list: string[]`
-- `tableId: string`
 - `delayMs: number`：两次预览之间的间隔，默认 `400`
 
 请求示例：
@@ -138,7 +136,6 @@ curl -X POST http://127.0.0.1:3100/preview/execute \
 可选参数：
 
 - `aweme_white_list: string[]`
-- `tableId: string`
 - `deleteAds: boolean`：是否删除 `canDeletePromotions` 中的整条广告，默认 `false`
 
 请求示例：
@@ -171,7 +168,6 @@ curl -X POST http://127.0.0.1:3100/preview/stop \
 
 - `cookie: string`：账户专用 Cookie，优先级最高
 - `aweme_white_list: string[]`
-- `tableId: string`
 
 请求体顶层可选参数：
 
@@ -226,7 +222,6 @@ curl -X POST http://127.0.0.1:3100/preview/batch \
 - `appId: string`
 - `appSecret: string`
 - `appToken: string`
-- `tableId: string`
 - `baseUrl: string`
 
 说明：
@@ -251,20 +246,29 @@ curl -X POST http://127.0.0.1:3100/preview/feishu \
 
 ### 7. `POST /preview-manager/start`
 
-用途：启动某个用户的定时预览程序
+用途：启动某个用户下某个渠道的定时预览程序
 
 必填参数：
 
-- `user: string`：用户标识，对应 `config/users/feishu-<user>.json`
+- `user: string`：用户标识
+- `channel: string`：渠道标识
 - `intervalMinutes: number`：轮询间隔，必须大于 `0`
 - `aweme_white_list: string[]`
 - `cookie: string`：定时预览时使用的 Cookie
 
 可选参数：
 
-- `tableId: string`：覆盖用户默认飞书表
 - `buildTimeWindowStart: number`：默认 `90`
 - `buildTimeWindowEnd: number`：默认 `20`
+
+说明：
+
+- 预览管理器会按 `user + channel` 维度独立运行，因此同一个 `user` 可以同时跑多个 `channel`
+- 当前飞书配置会优先尝试以下路径：
+  - `config/users/<user>-<channel>.json`
+  - `config/users/feishu-<user>-<channel>.json`
+  - `config/users/<user>/<channel>.json`
+  - `config/users/feishu-<user>.json`
 
 请求示例：
 
@@ -273,6 +277,7 @@ curl -X POST http://127.0.0.1:3100/preview-manager/start \
   -H "Content-Type: application/json" \
   -d '{
     "user": "xh-mr",
+    "channel": "每日",
     "intervalMinutes": 20,
     "cookie": "your_cookie",
     "aweme_white_list": ["小红看剧", "斯娜看剧"]
@@ -281,11 +286,12 @@ curl -X POST http://127.0.0.1:3100/preview-manager/start \
 
 ### 8. `POST /preview-manager/stop`
 
-用途：停用某个用户的定时预览程序
+用途：停用某个用户下某个渠道的定时预览程序
 
 必填参数：
 
 - `user: string`
+- `channel: string`
 
 请求示例：
 
@@ -293,17 +299,19 @@ curl -X POST http://127.0.0.1:3100/preview-manager/start \
 curl -X POST http://127.0.0.1:3100/preview-manager/stop \
   -H "Content-Type: application/json" \
   -d '{
-    "user": "xh-mr"
+    "user": "xh-mr",
+    "channel": "每日"
   }'
 ```
 
 ### 9. `POST /preview-manager/update`
 
-用途：更新某个用户预览程序的运行配置，不会先停再启
+用途：更新某个用户下某个渠道预览程序的运行配置，不会先停再启
 
 必填参数：
 
 - `user: string`
+- `channel: string`
 
 可选参数：
 
@@ -320,6 +328,7 @@ curl -X POST http://127.0.0.1:3100/preview-manager/update \
   -H "Content-Type: application/json" \
   -d '{
     "user": "xh-mr",
+    "channel": "每日",
     "intervalMinutes": 30,
     "cookie": "new_cookie",
     "buildTimeWindowStart": 120,
@@ -329,22 +338,24 @@ curl -X POST http://127.0.0.1:3100/preview-manager/update \
 
 ### 10. `GET /preview-manager/status`
 
-用途：查看全部预览程序状态，或查看单个用户状态
+用途：查看全部预览程序状态，或查看某个用户 / 某个渠道的状态
 
 查询参数：
 
-- `user: string`：可选，不传则返回全部
+- `user: string`：可选，不传则返回全部用户
+- `channel: string`：可选，不传则返回全部渠道
 
 请求示例：
 
 ```bash
 curl "http://127.0.0.1:3100/preview-manager/status"
 curl "http://127.0.0.1:3100/preview-manager/status?user=xh-mr"
+curl "http://127.0.0.1:3100/preview-manager/status?user=xh-mr&channel=%E6%AF%8F%E6%97%A5"
 ```
 
 ## 配置说明
 
-- 预览管理器会优先读取 `config/users/feishu-<user>.json`
+- 预览管理器会优先按 `user + channel` 解析飞书配置，找不到时回退到用户级配置
 - 运行状态会写入 `data/preview-states.json`
 
 ## 代理调试

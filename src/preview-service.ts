@@ -24,7 +24,6 @@ interface PreviewTaskConfig {
   drama_name: string; // 剧名
   aweme_white_list?: string[]; // 抖音号白名单
   cookie: string; // 认证Cookie
-  tableId?: string; // 飞书表格ID（可选，用于特定场景）
 }
 
 interface BatchPreviewConfig {

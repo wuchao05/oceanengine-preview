@@ -176,13 +176,11 @@ export class PreviewHttpServer {
     const aweme_white_list = Array.isArray(body?.aweme_white_list)
       ? (body.aweme_white_list as string[])
       : undefined;
-    const tableId = body?.tableId as string | undefined;
     const config: PreviewTaskConfig = {
       aadvid,
       drama_name,
       cookie,
       aweme_white_list,
-      tableId,
     };
 
     console.log(`[预览接口] 分析请求 | 账户: ${aadvid} | 剧名: ${drama_name}`);
@@ -231,7 +229,6 @@ export class PreviewHttpServer {
     const aweme_white_list = Array.isArray(body?.aweme_white_list)
       ? (body.aweme_white_list as string[])
       : undefined;
-    const tableId = body?.tableId as string | undefined;
     const delayMs = Number(body?.delayMs) || 400;
 
     const config: PreviewTaskConfig = {
@@ -239,7 +236,6 @@ export class PreviewHttpServer {
       drama_name,
       cookie,
       aweme_white_list,
-      tableId,
     };
 
     console.log(`[预览接口] 执行预览 | 账户: ${aadvid} | 剧名: ${drama_name}`);
@@ -294,7 +290,6 @@ export class PreviewHttpServer {
     const aweme_white_list = Array.isArray(body?.aweme_white_list)
       ? (body.aweme_white_list as string[])
       : undefined;
-    const tableId = body?.tableId as string | undefined;
     const deleteAds = Boolean(body?.deleteAds);
 
     const config: PreviewTaskConfig = {
@@ -302,7 +297,6 @@ export class PreviewHttpServer {
       drama_name,
       cookie,
       aweme_white_list,
-      tableId,
     };
 
     console.log(`[预览接口] 停用预览 | 账户: ${aadvid} | 剧名: ${drama_name}`);
@@ -375,7 +369,6 @@ export class PreviewHttpServer {
         aweme_white_list: Array.isArray(acc.aweme_white_list)
           ? (acc.aweme_white_list as string[])
           : undefined,
-        tableId: typeof acc.tableId === "string" ? acc.tableId : undefined,
       })),
       dryRun,
       previewDelayMs,
@@ -441,12 +434,17 @@ export class PreviewHttpServer {
     const body = await this.parseBody(req);
 
     const user = body?.user as string;
+    const channel = body?.channel as string;
     const intervalMinutes = Number(body?.intervalMinutes);
     const aweme_white_list = body?.aweme_white_list as string[];
     const cookie = body?.cookie as string;
 
     if (!user) {
       this.send(res, 400, { message: "缺少必需参数: user" });
+      return;
+    }
+    if (!channel) {
+      this.send(res, 400, { message: "缺少必需参数: channel" });
       return;
     }
 
@@ -469,7 +467,6 @@ export class PreviewHttpServer {
       return;
     }
 
-    const tableId = body?.tableId as string | undefined;
     const buildTimeWindowStart = body?.buildTimeWindowStart
       ? Number(body.buildTimeWindowStart)
       : undefined;
@@ -479,16 +476,16 @@ export class PreviewHttpServer {
 
     const config: PreviewProgramConfig = {
       user,
+      channel,
       intervalMinutes,
       aweme_white_list,
       cookie,
-      tableId,
       buildTimeWindowStart,
       buildTimeWindowEnd,
     };
 
     console.log(
-      `[预览管理器接口] 启用预览程序 | 用户: ${user} | 间隔: ${intervalMinutes}分钟`
+      `[预览管理器接口] 启用预览程序 | 用户: ${user} | 渠道: ${channel} | 间隔: ${intervalMinutes}分钟`
     );
 
     const result = await this.previewManager.startPreview(config);
@@ -501,15 +498,20 @@ export class PreviewHttpServer {
   ) {
     const body = await this.parseBody(req);
     const user = body?.user as string;
+    const channel = body?.channel as string;
 
     if (!user) {
       this.send(res, 400, { message: "缺少必需参数: user" });
       return;
     }
+    if (!channel) {
+      this.send(res, 400, { message: "缺少必需参数: channel" });
+      return;
+    }
 
-    console.log(`[预览管理器接口] 停用预览程序 | 用户: ${user}`);
+    console.log(`[预览管理器接口] 停用预览程序 | 用户: ${user} | 渠道: ${channel}`);
 
-    const result = this.previewManager.stopPreview(user);
+    const result = this.previewManager.stopPreview(user, channel);
     this.send(res, 200, result);
   }
 
@@ -519,9 +521,14 @@ export class PreviewHttpServer {
   ) {
     const body = await this.parseBody(req);
     const user = body?.user as string;
+    const channel = body?.channel as string;
 
     if (!user) {
       this.send(res, 400, { message: "缺少必需参数: user" });
+      return;
+    }
+    if (!channel) {
+      this.send(res, 400, { message: "缺少必需参数: channel" });
       return;
     }
 
@@ -547,20 +554,21 @@ export class PreviewHttpServer {
       return;
     }
 
-    console.log(`[预览管理器接口] 更新配置 | 用户: ${user}`);
+    console.log(`[预览管理器接口] 更新配置 | 用户: ${user} | 渠道: ${channel}`);
 
-    const result = this.previewManager.updatePreview(user, updates);
+    const result = this.previewManager.updatePreview(user, channel, updates);
     this.send(res, 200, result);
   }
 
   private handlePreviewManagerStatus(url: URL, res: http.ServerResponse) {
     const user = url.searchParams.get("user") || undefined;
+    const channel = url.searchParams.get("channel") || undefined;
 
     console.log(
-      `[预览管理器接口] 查询状态${user ? ` | 用户: ${user}` : " | 所有用户"}`
+      `[预览管理器接口] 查询状态${user ? ` | 用户: ${user}` : " | 所有用户"}${channel ? ` | 渠道: ${channel}` : ""}`
     );
 
-    const result = this.previewManager.getStatus(user);
+    const result = this.previewManager.getStatus(user, channel);
     this.send(res, 200, result);
   }
 

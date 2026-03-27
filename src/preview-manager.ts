@@ -34,25 +34,44 @@ interface UserFeishuConfig {
 }
 
 /**
- * 根据用户标识加载对应的飞书配置文件
- * 例如 user="xh-ql" 则加载 config/users/feishu-xh-ql.json
+ * 根据用户和渠道加载飞书配置文件。
+ * 目前优先尝试更细粒度的渠道配置，找不到时回退到用户级配置。
  */
-function loadUserFeishuConfig(user: string): UserFeishuConfig {
-  const configPath = path.join(FEISHU_CONFIG_DIR, `feishu-${user}.json`);
-  if (!fs.existsSync(configPath)) {
-    throw new Error(`用户 ${user} 的飞书配置文件不存在: ${configPath}`);
+function loadFeishuConfig(user: string, channel: string): UserFeishuConfig {
+  const candidatePaths = [
+    path.join(FEISHU_CONFIG_DIR, `${user}-${channel}.json`),
+    path.join(FEISHU_CONFIG_DIR, `feishu-${user}-${channel}.json`),
+    path.join(FEISHU_CONFIG_DIR, user, `${channel}.json`),
+    path.join(FEISHU_CONFIG_DIR, `feishu-${user}.json`),
+  ];
+
+  const configPath = candidatePaths.find((item) => fs.existsSync(item));
+  if (!configPath) {
+    throw new Error(
+      `用户 ${user} 渠道 ${channel} 的飞书配置文件不存在，可选路径: ${candidatePaths.join(
+        ", "
+      )}`
+    );
   }
+
   const content = fs.readFileSync(configPath, "utf-8");
   const config = JSON.parse(content) as UserFeishuConfig;
   if (!config.tableId) {
-    throw new Error(`用户 ${user} 的飞书配置文件缺少 tableId`);
+    throw new Error(`飞书配置文件缺少 tableId: ${configPath}`);
   }
+
   return config;
+}
+
+function getProgramKey(user: string, channel: string) {
+  return `${user}::${channel}`;
 }
 
 // =============== 类型定义 ===============
 export interface PreviewProgramState {
+  key: string;
   user: string;
+  channel: string;
   enabled: boolean;
   intervalMinutes: number;
   aweme_white_list: string[];
@@ -81,10 +100,10 @@ export interface PreviewProgramState {
 
 export interface PreviewProgramConfig {
   user: string;
+  channel: string;
   intervalMinutes: number;
   aweme_white_list: string[];
   cookie: string;
-  tableId?: string; // 飞书表ID（由用户配置决定）
   buildTimeWindowStart?: number;
   buildTimeWindowEnd?: number;
 }
@@ -126,20 +145,27 @@ export class PreviewManager {
   async startPreview(config: PreviewProgramConfig): Promise<{
     message: string;
     user: string;
+    channel: string;
     tableId: string;
     intervalMinutes: number;
     nextRun: string;
   }> {
-    const { user, intervalMinutes, aweme_white_list, cookie } = config;
+    const { user, channel, intervalMinutes, aweme_white_list, cookie } = config;
+    const key = getProgramKey(user, channel);
 
-    // 根据用户加载飞书配置文件
-    const userFeishuConfig = loadUserFeishuConfig(user);
-    const tableId = config.tableId || userFeishuConfig.tableId;
-    console.log(`[预览管理器] 用户 ${user} 的飞书表ID: ${tableId}`);
+    // 根据用户和渠道加载飞书配置文件
+    const feishuConfig = loadFeishuConfig(user, channel);
+    const tableId = feishuConfig.tableId;
+    console.log(
+      `[预览管理器] 用户 ${user} 渠道 ${channel} 的飞书表ID: ${tableId}`
+    );
 
     // 验证参数
     if (!user) {
       throw new Error("缺少必需参数: user");
+    }
+    if (!channel) {
+      throw new Error("缺少必需参数: channel");
     }
     if (!intervalMinutes || intervalMinutes < 1) {
       throw new Error("intervalMinutes 必须大于 0");
@@ -152,14 +178,16 @@ export class PreviewManager {
     }
 
     // 检查是否已存在
-    const existing = this.states.get(user);
+    const existing = this.states.get(key);
     if (existing && existing.enabled) {
-      throw new Error(`用户 ${user} 的预览程序已在运行中`);
+      throw new Error(`用户 ${user} 渠道 ${channel} 的预览程序已在运行中`);
     }
 
     // 创建或更新状态
     const state: PreviewProgramState = {
+      key,
       user,
+      channel,
       enabled: true,
       intervalMinutes,
       aweme_white_list,
@@ -177,28 +205,32 @@ export class PreviewManager {
       },
     };
 
-    this.states.set(user, state);
+    this.states.set(key, state);
 
     // 创建定时器
-    this.createTimer(user, state);
+    this.createTimer(key, state);
 
     // 保存状态
     this.saveStates();
 
     console.log(
-      `[预览管理器] 启用预览程序 | 用户: ${user} | 飞书表: ${tableId} | 间隔: ${intervalMinutes}分钟`
+      `[预览管理器] 启用预览程序 | 用户: ${user} | 渠道: ${channel} | 飞书表: ${tableId} | 间隔: ${intervalMinutes}分钟`
     );
 
     // 立即执行一次预览（可选，注释掉则等待第一个间隔周期）
     setTimeout(() => {
-      this.executePreview(user, state).catch(err => {
-        console.error(`[预览管理器] 首次执行失败 | 用户: ${user}`, err);
+      this.executePreview(key, state).catch(err => {
+        console.error(
+          `[预览管理器] 首次执行失败 | 用户: ${user} | 渠道: ${channel}`,
+          err
+        );
       });
     }, 1000); // 延迟1秒执行，避免阻塞响应
 
     return {
       message: "预览程序已启用",
       user,
+      channel,
       tableId,
       intervalMinutes,
       nextRun: this.formatTime(state.nextRun!),
@@ -208,7 +240,7 @@ export class PreviewManager {
   /**
    * 更新预览程序配置（不停止运行）
    */
-  updatePreview(user: string, updates: {
+  updatePreview(user: string, channel: string, updates: {
     intervalMinutes?: number;
     aweme_white_list?: string[];
     cookie?: string;
@@ -217,11 +249,13 @@ export class PreviewManager {
   }): {
     message: string;
     user: string;
+    channel: string;
     updated: Record<string, unknown>;
   } {
-    const state = this.states.get(user);
+    const key = getProgramKey(user, channel);
+    const state = this.states.get(key);
     if (!state) {
-      throw new Error(`用户 ${user} 的预览程序不存在`);
+      throw new Error(`用户 ${user} 渠道 ${channel} 的预览程序不存在`);
     }
 
     const updated: Record<string, unknown> = {};
@@ -232,7 +266,7 @@ export class PreviewManager {
       // 重建定时器
       if (state.enabled && state.timerId) {
         clearInterval(state.timerId);
-        this.createTimer(user, state);
+        this.createTimer(key, state);
       }
     }
     if (updates.aweme_white_list !== undefined) {
@@ -259,6 +293,7 @@ export class PreviewManager {
     return {
       message: "预览程序配置已更新",
       user,
+      channel,
       updated,
     };
   }
@@ -266,15 +301,17 @@ export class PreviewManager {
   /**
    * 停用预览程序
    */
-  stopPreview(user: string): {
+  stopPreview(user: string, channel: string): {
     message: string;
     user: string;
+    channel: string;
     runCount: number;
     lastRun?: string;
   } {
-    const state = this.states.get(user);
+    const key = getProgramKey(user, channel);
+    const state = this.states.get(key);
     if (!state || !state.enabled) {
-      throw new Error(`用户 ${user} 的预览程序未运行`);
+      throw new Error(`用户 ${user} 渠道 ${channel} 的预览程序未运行`);
     }
 
     // 停止定时器
@@ -290,11 +327,12 @@ export class PreviewManager {
     // 保存状态
     this.saveStates();
 
-    console.log(`[预览管理器] 停用预览程序 | 用户: ${user}`);
+    console.log(`[预览管理器] 停用预览程序 | 用户: ${user} | 渠道: ${channel}`);
 
     return {
       message: "预览程序已停用",
       user,
+      channel,
       runCount: state.runCount,
       lastRun: state.lastRun ? this.formatTime(state.lastRun) : undefined,
     };
@@ -303,10 +341,12 @@ export class PreviewManager {
   /**
    * 查询预览程序状态
    */
-  getStatus(user?: string): {
+  getStatus(user?: string, channel?: string): {
     total: number;
     programs: Array<{
+      key: string;
       user: string;
+      channel: string;
       enabled: boolean;
       intervalMinutes: number;
       aweme_white_list: string[];
@@ -331,10 +371,15 @@ export class PreviewManager {
     if (user) {
       programs = programs.filter((p) => p.user === user);
     }
+    if (channel) {
+      programs = programs.filter((p) => p.channel === channel);
+    }
 
     // 格式化输出
     const formattedPrograms = programs.map((state) => ({
+      key: state.key,
       user: state.user,
+      channel: state.channel,
       enabled: state.enabled,
       intervalMinutes: state.intervalMinutes,
       aweme_white_list: state.aweme_white_list,
@@ -358,7 +403,7 @@ export class PreviewManager {
   /**
    * 创建定时器
    */
-  private createTimer(user: string, state: PreviewProgramState) {
+  private createTimer(key: string, state: PreviewProgramState) {
     // 清除旧定时器
     if (state.timerId) {
       clearInterval(state.timerId);
@@ -366,7 +411,7 @@ export class PreviewManager {
 
     // 创建新定时器
     const timerId = setInterval(async () => {
-      await this.executePreview(user, state);
+      await this.executePreview(key, state);
     }, state.intervalMinutes * 60 * 1000);
 
     state.timerId = timerId;
@@ -375,18 +420,16 @@ export class PreviewManager {
     ).toISOString();
 
     console.log(
-      `[预览管理器] 创建定时器 | 用户: ${user} | 下次执行: ${this.formatTime(
-        state.nextRun
-      )}`
+      `[预览管理器] 创建定时器 | 用户: ${state.user} | 渠道: ${state.channel} | 下次执行: ${this.formatTime(state.nextRun)}`
     );
   }
 
   /**
    * 执行预览任务
    */
-  private async executePreview(user: string, state: PreviewProgramState) {
+  private async executePreview(key: string, state: PreviewProgramState) {
     console.log(
-      `\n[预览管理器] 开始执行预览 | 用户: ${user} | 飞书表: ${state.tableId || "默认"} | 执行次数: ${
+      `\n[预览管理器] 开始执行预览 | 用户: ${state.user} | 渠道: ${state.channel} | 飞书表: ${state.tableId || "默认"} | 执行次数: ${
         state.runCount + 1
       }`
     );
@@ -396,15 +439,15 @@ export class PreviewManager {
 
     try {
       // 根据用户加载飞书配置
-      const userFeishuConfig = loadUserFeishuConfig(user);
+      const feishuConfig = loadFeishuConfig(state.user, state.channel);
 
       // 构建配置
       const config: FeishuPreviewConfig = {
         feishu: {
-          appId: userFeishuConfig.appId,
-          appSecret: userFeishuConfig.appSecret,
-          appToken: userFeishuConfig.appToken,
-          tableId: state.tableId || userFeishuConfig.tableId,
+          appId: feishuConfig.appId,
+          appSecret: feishuConfig.appSecret,
+          appToken: feishuConfig.appToken,
+          tableId: feishuConfig.tableId,
         },
         buildTimeFilterWindowStartMinutes: state.buildTimeWindowStart,
         buildTimeFilterWindowEndMinutes: state.buildTimeWindowEnd,
@@ -428,13 +471,13 @@ export class PreviewManager {
       state.lastError = undefined;
 
       console.log(
-        `[预览管理器] 执行完成 | 用户: ${user} | 成功: ${result.success} | 失败: ${result.failed}`
+        `[预览管理器] 执行完成 | 用户: ${state.user} | 渠道: ${state.channel} | 成功: ${result.success} | 失败: ${result.failed}`
       );
     } catch (error: any) {
       state.lastStatus = "failed";
       state.lastError = error?.message || String(error);
       console.error(
-        `[预览管理器] 执行失败 | 用户: ${user}`,
+        `[预览管理器] 执行失败 | 用户: ${state.user} | 渠道: ${state.channel}`,
         error?.message || error
       );
     }
@@ -464,14 +507,20 @@ export class PreviewManager {
         PreviewProgramState
       >;
 
-      for (const [user, state] of Object.entries(statesObj)) {
+      for (const [key, state] of Object.entries(statesObj)) {
+        if (!state.key) {
+          state.key = key;
+        }
+        if (!state.channel) {
+          state.channel = "default";
+        }
         if (!state.cookie?.trim()) {
           console.warn(
-            `[预览管理器] 用户 ${user} 的持久化状态缺少 cookie，已自动停用该预览程序`
+            `[预览管理器] 用户 ${state.user} 渠道 ${state.channel} 的持久化状态缺少 cookie，已自动停用该预览程序`
           );
           state.enabled = false;
         }
-        this.states.set(user, state);
+        this.states.set(state.key, state);
       }
 
       console.log(
@@ -517,9 +566,9 @@ export class PreviewManager {
    */
   private restoreTimers() {
     let restoredCount = 0;
-    for (const [user, state] of this.states) {
+    for (const [key, state] of this.states) {
       if (state.enabled) {
-        this.createTimer(user, state);
+        this.createTimer(key, state);
         restoredCount++;
       }
     }
@@ -535,11 +584,13 @@ export class PreviewManager {
    * 停止所有定时器（优雅关闭时使用）
    */
   stopAllTimers() {
-    for (const [user, state] of this.states) {
+    for (const [, state] of this.states) {
       if (state.timerId) {
         clearInterval(state.timerId);
         state.timerId = undefined;
-        console.log(`[预览管理器] 停止定时器 | 用户: ${user}`);
+        console.log(
+          `[预览管理器] 停止定时器 | 用户: ${state.user} | 渠道: ${state.channel}`
+        );
       }
     }
   }
