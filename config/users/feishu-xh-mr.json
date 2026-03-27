@@ -1,0 +1,24 @@
+{
+  "appId": "cli_a870f7611b7b1013",
+  "appSecret": "NTwHbZG8rpOQyMEnXGPV6cNQ84KEqE8z",
+  "appToken": "WdWvbGUXXaokk8sAS94c00IZnsf",
+  "tableId": "tblJcLhLpEkmFkga",
+  "baseUrl": "https://open.feishu.cn/open-apis/bitable/v1",
+  "fieldNames": [
+    "剧名",
+    "账户",
+    "日期",
+    "搭建时间",
+    "主体",
+    "当前状态",
+    "上架时间",
+    "抖音素材"
+  ],
+  "statusFieldName": "当前状态",
+  "completedStatusValue": "已完成",
+  "failedStatusValue": "搭建失败",
+  "remarkFieldName": "备注",
+  "buildTimeFieldName": "搭建时间",
+  "pageSize": 200,
+  "tokenRefreshInterval": 7200000
+}

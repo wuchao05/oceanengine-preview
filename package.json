@@ -1,10 +1,13 @@
 {
+  "name": "oceanengine-preview",
+  "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx src/index.ts --config ./config/settings.json",
+    "dev": "tsx src/index.ts",
+    "http:run": "tsx src/index.ts",
     "proxy": "tsx src/proxy.ts",
     "build": "tsc",
-    "start": "node dist/index.js --config ./config/settings.json"
+    "start": "node dist/index.js"
   },
   "dependencies": {
     "axios": "^1.13.1",
