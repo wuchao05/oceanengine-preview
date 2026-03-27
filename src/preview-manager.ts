@@ -8,7 +8,6 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { PreviewService } from "./preview-service.js";
 import type { FeishuPreviewConfig } from "./preview-service.js";
-import { getOceanCookie, clearConfigCache } from "./config-service.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -57,7 +56,7 @@ export interface PreviewProgramState {
   enabled: boolean;
   intervalMinutes: number;
   aweme_white_list: string[];
-  subject?: string; // 主体（超琦、欣雅、每日等）
+  cookie: string;
   tableId?: string; // 飞书表ID（由用户配置决定）
   buildTimeWindowStart: number;
   buildTimeWindowEnd: number;
@@ -84,7 +83,7 @@ export interface PreviewProgramConfig {
   user: string;
   intervalMinutes: number;
   aweme_white_list: string[];
-  subject?: string; // 主体（超琦、欣雅、每日等），用于过滤表格中的记录
+  cookie: string;
   tableId?: string; // 飞书表ID（由用户配置决定）
   buildTimeWindowStart?: number;
   buildTimeWindowEnd?: number;
@@ -95,20 +94,10 @@ export class PreviewManager {
   private states: Map<string, PreviewProgramState> = new Map();
   private previewService: PreviewService;
 
-  // 远程 Cookie
-  private cookieChaoqi: string;
-  private cookieXinya: string;
-  private cookieMeiri: string;
-
   private initialized = false;
 
   constructor() {
     this.previewService = new PreviewService();
-
-    // Cookie 将在 init() 中异步加载
-    this.cookieChaoqi = "";
-    this.cookieXinya = "";
-    this.cookieMeiri = "";
 
     // 加载持久化状态
     this.loadStates();
@@ -122,32 +111,13 @@ export class PreviewManager {
   }
 
   /**
-   * 异步初始化配置（从远程获取 Cookie）
+   * 异步初始化
    * 在使用预览功能前必须调用此方法
    */
   async init(): Promise<void> {
     if (this.initialized) return;
-
-    try {
-      console.log("[预览管理器] 正在获取远程配置...");
-      // 从远程配置服务获取 Cookie
-      this.cookieChaoqi = await getOceanCookie("OCEAN_COOKIE_CHAOQI");
-      this.cookieXinya = await getOceanCookie("OCEAN_COOKIE_XINYA");
-      this.cookieMeiri = await getOceanCookie("OCEAN_COOKIE_MEIRI");
-
-      if (!this.cookieChaoqi && !this.cookieXinya && !this.cookieMeiri) {
-        console.warn("[预览管理器] 警告: 远程配置中 OCEAN_COOKIE 为空");
-      } else {
-        console.log("[预览管理器] 远程配置获取成功");
-      }
-
-      this.initialized = true;
-    } catch (error) {
-      console.error(
-        `[预览管理器] 获取配置失败: ${error instanceof Error ? error.message : error}`
-      );
-      throw error;
-    }
+    this.initialized = true;
+    console.log("[预览管理器] 初始化完成");
   }
 
   /**
@@ -156,12 +126,11 @@ export class PreviewManager {
   async startPreview(config: PreviewProgramConfig): Promise<{
     message: string;
     user: string;
-    subject?: string;
     tableId: string;
     intervalMinutes: number;
     nextRun: string;
   }> {
-    const { user, intervalMinutes, aweme_white_list, subject } = config;
+    const { user, intervalMinutes, aweme_white_list, cookie } = config;
 
     // 根据用户加载飞书配置文件
     const userFeishuConfig = loadUserFeishuConfig(user);
@@ -178,6 +147,9 @@ export class PreviewManager {
     if (!aweme_white_list || aweme_white_list.length === 0) {
       throw new Error("aweme_white_list 不能为空");
     }
+    if (!cookie?.trim()) {
+      throw new Error("cookie 不能为空");
+    }
 
     // 检查是否已存在
     const existing = this.states.get(user);
@@ -191,7 +163,7 @@ export class PreviewManager {
       enabled: true,
       intervalMinutes,
       aweme_white_list,
-      subject,
+      cookie: cookie.trim(),
       tableId,
       buildTimeWindowStart:
         config.buildTimeWindowStart || DEFAULT_BUILD_TIME_WINDOW_START,
@@ -214,7 +186,7 @@ export class PreviewManager {
     this.saveStates();
 
     console.log(
-      `[预览管理器] 启用预览程序 | 用户: ${user} | 主体: ${subject || "未指定"} | 飞书表: ${tableId} | 间隔: ${intervalMinutes}分钟`
+      `[预览管理器] 启用预览程序 | 用户: ${user} | 飞书表: ${tableId} | 间隔: ${intervalMinutes}分钟`
     );
 
     // 立即执行一次预览（可选，注释掉则等待第一个间隔周期）
@@ -227,7 +199,6 @@ export class PreviewManager {
     return {
       message: "预览程序已启用",
       user,
-      subject,
       tableId,
       intervalMinutes,
       nextRun: this.formatTime(state.nextRun!),
@@ -240,7 +211,7 @@ export class PreviewManager {
   updatePreview(user: string, updates: {
     intervalMinutes?: number;
     aweme_white_list?: string[];
-    subject?: string;
+    cookie?: string;
     buildTimeWindowStart?: number;
     buildTimeWindowEnd?: number;
   }): {
@@ -268,9 +239,9 @@ export class PreviewManager {
       state.aweme_white_list = updates.aweme_white_list;
       updated.aweme_white_list = updates.aweme_white_list;
     }
-    if (updates.subject !== undefined) {
-      state.subject = updates.subject;
-      updated.subject = updates.subject;
+    if (updates.cookie !== undefined && updates.cookie.trim()) {
+      state.cookie = updates.cookie.trim();
+      updated.cookie = "已更新";
     }
     if (updates.buildTimeWindowStart !== undefined) {
       state.buildTimeWindowStart = updates.buildTimeWindowStart;
@@ -415,7 +386,7 @@ export class PreviewManager {
    */
   private async executePreview(user: string, state: PreviewProgramState) {
     console.log(
-      `\n[预览管理器] 开始执行预览 | 用户: ${user} | 主体: ${state.subject || "未指定"} | 飞书表: ${state.tableId || "默认"} | 执行次数: ${
+      `\n[预览管理器] 开始执行预览 | 用户: ${user} | 飞书表: ${state.tableId || "默认"} | 执行次数: ${
         state.runCount + 1
       }`
     );
@@ -424,16 +395,6 @@ export class PreviewManager {
     state.runCount += 1;
 
     try {
-      // 每次执行时重新获取最新的 Ocean Cookie
-      try {
-        clearConfigCache();
-        this.cookieChaoqi = await getOceanCookie("OCEAN_COOKIE_CHAOQI");
-        this.cookieXinya = await getOceanCookie("OCEAN_COOKIE_XINYA");
-        this.cookieMeiri = await getOceanCookie("OCEAN_COOKIE_MEIRI");
-      } catch (cookieErr) {
-        console.warn(`[预览管理器] 刷新 Cookie 失败，使用缓存值: ${cookieErr instanceof Error ? cookieErr.message : cookieErr}`);
-      }
-
       // 根据用户加载飞书配置
       const userFeishuConfig = loadUserFeishuConfig(user);
 
@@ -445,15 +406,12 @@ export class PreviewManager {
           appToken: userFeishuConfig.appToken,
           tableId: state.tableId || userFeishuConfig.tableId,
         },
-        subject: state.subject, // 传入主体，用于过滤飞书记录
         buildTimeFilterWindowStartMinutes: state.buildTimeWindowStart,
         buildTimeFilterWindowEndMinutes: state.buildTimeWindowEnd,
         aweme_white_list: state.aweme_white_list,
         dryRun: false,
         previewDelayMs: 400,
-        cookieChaoqi: this.cookieChaoqi,
-        cookieXinya: this.cookieXinya,
-        cookieMeiri: this.cookieMeiri,
+        cookie: state.cookie,
       };
 
       // 执行预览
@@ -507,6 +465,12 @@ export class PreviewManager {
       >;
 
       for (const [user, state] of Object.entries(statesObj)) {
+        if (!state.cookie?.trim()) {
+          console.warn(
+            `[预览管理器] 用户 ${user} 的持久化状态缺少 cookie，已自动停用该预览程序`
+          );
+          state.enabled = false;
+        }
         this.states.set(user, state);
       }
 

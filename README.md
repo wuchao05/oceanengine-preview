@@ -29,7 +29,6 @@ HTTP_PORT=3200 pnpm dev
 
 - `src/preview-service.ts`：预览核心逻辑
 - `src/preview-manager.ts`：多用户定时预览管理器
-- `src/config-service.ts`：远程配置拉取
 - `src/http-server.ts`：独立 HTTP 服务入口
 - `config/users/feishu-*.json`：用户飞书配置
 
@@ -81,7 +80,6 @@ http://127.0.0.1:3100
 
 可选参数：
 
-- `subject: string`：主体，可传 `超琦`、`虎雨`、`欣雅`、`每日`
 - `aweme_white_list: string[]`：抖音号白名单
 - `tableId: string`：来源飞书表 ID，仅做透传保留
 
@@ -94,7 +92,6 @@ curl -X POST http://127.0.0.1:3100/preview/analyze \
     "aadvid": "1234567890",
     "drama_name": "示例剧名",
     "cookie": "your_cookie",
-    "subject": "每日",
     "aweme_white_list": ["小红看剧", "斯娜看剧"]
   }'
 ```
@@ -111,7 +108,6 @@ curl -X POST http://127.0.0.1:3100/preview/analyze \
 
 可选参数：
 
-- `subject: string`
 - `aweme_white_list: string[]`
 - `tableId: string`
 - `delayMs: number`：两次预览之间的间隔，默认 `400`
@@ -125,7 +121,6 @@ curl -X POST http://127.0.0.1:3100/preview/execute \
     "aadvid": "1234567890",
     "drama_name": "示例剧名",
     "cookie": "your_cookie",
-    "subject": "每日",
     "delayMs": 500
   }'
 ```
@@ -142,7 +137,6 @@ curl -X POST http://127.0.0.1:3100/preview/execute \
 
 可选参数：
 
-- `subject: string`
 - `aweme_white_list: string[]`
 - `tableId: string`
 - `deleteAds: boolean`：是否删除 `canDeletePromotions` 中的整条广告，默认 `false`
@@ -156,14 +150,13 @@ curl -X POST http://127.0.0.1:3100/preview/stop \
     "aadvid": "1234567890",
     "drama_name": "示例剧名",
     "cookie": "your_cookie",
-    "subject": "每日",
     "deleteAds": true
   }'
 ```
 
 ### 5. `POST /preview/batch`
 
-用途：批量处理多个账户，支持 dry-run、主体 Cookie 自动映射
+用途：批量处理多个账户，支持 dry-run 和统一 Cookie
 
 必填参数：
 
@@ -177,7 +170,6 @@ curl -X POST http://127.0.0.1:3100/preview/stop \
 `accounts[]` 内每项可选参数：
 
 - `cookie: string`：账户专用 Cookie，优先级最高
-- `subject: string`
 - `aweme_white_list: string[]`
 - `tableId: string`
 
@@ -185,15 +177,12 @@ curl -X POST http://127.0.0.1:3100/preview/stop \
 
 - `dryRun: boolean`：只分析不执行
 - `previewDelayMs: number`：预览间隔，默认 `400`
-- `cookieChaoqi: string`：`超琦`/`虎雨` 主体使用
-- `cookieXinya: string`：`欣雅` 主体使用
-- `cookieMeiri: string`：`每日` 主体使用
+- `cookie: string`：统一给所有未单独配置 Cookie 的账户使用
 
 Cookie 选择顺序：
 
 1. `accounts[i].cookie`
-2. 按 `subject` 选择对应的 `cookieChaoqi / cookieXinya / cookieMeiri`
-3. 兜底使用第一个可用的全局 Cookie
+2. 顶层 `cookie`
 
 请求示例：
 
@@ -203,20 +192,16 @@ curl -X POST http://127.0.0.1:3100/preview/batch \
   -d '{
     "dryRun": false,
     "previewDelayMs": 400,
-    "cookieChaoqi": "cookie_for_chaoqi",
-    "cookieXinya": "cookie_for_xinya",
-    "cookieMeiri": "cookie_for_meiri",
+    "cookie": "shared_cookie",
     "accounts": [
       {
         "aadvid": "1234567890",
         "drama_name": "剧A",
-        "subject": "每日",
         "aweme_white_list": ["小红看剧"]
       },
       {
         "aadvid": "9876543210",
-        "drama_name": "剧B",
-        "subject": "欣雅"
+        "drama_name": "剧B"
       }
     ]
   }'
@@ -228,15 +213,12 @@ curl -X POST http://127.0.0.1:3100/preview/batch \
 
 请求体可选参数：
 
-- `subject: string`：只处理指定主体
 - `buildTimeFilterWindowStartMinutes: number`：时间窗口起始，默认 `90`
 - `buildTimeFilterWindowEndMinutes: number`：时间窗口结束，默认 `20`
 - `aweme_white_list: string[]`
 - `dryRun: boolean`
 - `previewDelayMs: number`
-- `cookieChaoqi: string`
-- `cookieXinya: string`
-- `cookieMeiri: string`
+- `cookie: string`：统一给飞书拉取到的账户使用
 - `feishu: object`：自定义飞书配置
 
 `feishu` 内可选字段：
@@ -250,8 +232,7 @@ curl -X POST http://127.0.0.1:3100/preview/batch \
 说明：
 
 - 不传 `feishu` 时，使用代码内默认飞书配置
-- 如果传了 `subject`，只会处理飞书里该主体的记录
-- 实际执行时仍然会根据飞书记录里的主体去匹配 Cookie
+- 不传 `cookie` 时，飞书拉取到的账户没有可用 Cookie，将无法执行
 
 请求示例：
 
@@ -259,13 +240,12 @@ curl -X POST http://127.0.0.1:3100/preview/batch \
 curl -X POST http://127.0.0.1:3100/preview/feishu \
   -H "Content-Type: application/json" \
   -d '{
-    "subject": "每日",
     "buildTimeFilterWindowStartMinutes": 90,
     "buildTimeFilterWindowEndMinutes": 20,
     "previewDelayMs": 400,
     "dryRun": false,
     "aweme_white_list": ["小红看剧", "斯娜看剧"],
-    "cookieMeiri": "cookie_for_meiri"
+    "cookie": "shared_cookie"
   }'
 ```
 
@@ -278,10 +258,10 @@ curl -X POST http://127.0.0.1:3100/preview/feishu \
 - `user: string`：用户标识，对应 `config/users/feishu-<user>.json`
 - `intervalMinutes: number`：轮询间隔，必须大于 `0`
 - `aweme_white_list: string[]`
+- `cookie: string`：定时预览时使用的 Cookie
 
 可选参数：
 
-- `subject: string`
 - `tableId: string`：覆盖用户默认飞书表
 - `buildTimeWindowStart: number`：默认 `90`
 - `buildTimeWindowEnd: number`：默认 `20`
@@ -294,7 +274,7 @@ curl -X POST http://127.0.0.1:3100/preview-manager/start \
   -d '{
     "user": "xh-mr",
     "intervalMinutes": 20,
-    "subject": "每日",
+    "cookie": "your_cookie",
     "aweme_white_list": ["小红看剧", "斯娜看剧"]
   }'
 ```
@@ -329,7 +309,7 @@ curl -X POST http://127.0.0.1:3100/preview-manager/stop \
 
 - `intervalMinutes: number`
 - `aweme_white_list: string[]`
-- `subject: string`
+- `cookie: string`
 - `buildTimeWindowStart: number`
 - `buildTimeWindowEnd: number`
 
@@ -341,6 +321,7 @@ curl -X POST http://127.0.0.1:3100/preview-manager/update \
   -d '{
     "user": "xh-mr",
     "intervalMinutes": 30,
+    "cookie": "new_cookie",
     "buildTimeWindowStart": 120,
     "buildTimeWindowEnd": 30
   }'
@@ -363,7 +344,6 @@ curl "http://127.0.0.1:3100/preview-manager/status?user=xh-mr"
 
 ## 配置说明
 
-- Ocean Cookie 默认通过远程配置服务 `https://cxyy.top/api/auth/config` 获取
 - 预览管理器会优先读取 `config/users/feishu-<user>.json`
 - 运行状态会写入 `data/preview-states.json`
 

@@ -25,16 +25,13 @@ interface PreviewTaskConfig {
   aweme_white_list?: string[]; // 抖音号白名单
   cookie: string; // 认证Cookie
   tableId?: string; // 飞书表格ID（可选，用于特定场景）
-  subject?: string; // 主体（超琦、欣雅、每日等）
 }
 
 interface BatchPreviewConfig {
   accounts: PreviewTaskConfig[]; // 账户列表
   dryRun?: boolean; // 是否只分析不执行
   previewDelayMs?: number; // 预览延迟时间
-  cookieChaoqi?: string; // 超琦主体的 cookie
-  cookieXinya?: string; // 欣雅主体的 cookie
-  cookieMeiri?: string; // 每日主体的 cookie
+  cookie?: string; // 全局通用 Cookie
 }
 
 interface FeishuConfig {
@@ -53,15 +50,12 @@ interface FeishuPreviewConfig {
     tableId?: string;
     baseUrl?: string;
   };
-  subject?: string; // 主体（超琦、欣雅、每日等），用于过滤飞书记录
   buildTimeFilterWindowStartMinutes?: number; // 搭建时间过滤窗口起始（相对当前时间的前N分钟），默认90
   buildTimeFilterWindowEndMinutes?: number; // 搭建时间过滤窗口结束（相对当前时间的前N分钟），默认20
   aweme_white_list?: string[]; // 全局抖音号白名单
   dryRun?: boolean;
   previewDelayMs?: number;
-  cookieChaoqi?: string;
-  cookieXinya?: string;
-  cookieMeiri?: string;
+  cookie?: string;
 }
 
 interface FeishuFieldValue {
@@ -73,7 +67,6 @@ interface FeishuRecord {
   fields: {
     剧名?: FeishuFieldValue[];
     账户?: FeishuFieldValue[];
-    主体?: FeishuFieldValue[] | string;
     日期?: number;
     当前状态?: string;
     搭建时间?: number;
@@ -359,52 +352,66 @@ async function fetchMaterialsByPromotions(
   return results;
 }
 
-function classifyMaterials(materials: MaterialItem[]) {
-  const ensureArr = (x?: string[]) => (Array.isArray(x) ? x : []);
+const ensureStatusArray = (x?: string[]) => (Array.isArray(x) ? x : []);
 
-  const needPreview = materials.filter(
-    (m) =>
-      m.material_status_first_name === "投放中" &&
-      ensureArr(m.material_status_second_name).length === 0 &&
-      (m.material_reject_reason_type ?? 0) === 0
-  );
-
-  const needDelete = materials.filter(
-    (m) =>
-      m.material_status_first_name === "投放中" &&
-      (m.material_reject_reason_type ?? 0) === 1
-  );
-
-  return { needPreview, needDelete };
+function isPendingMaterial(m: MaterialItem) {
+  return m.material_status_first_name === "未投放";
 }
 
-// 每日主体专用的素材分类逻辑
-function classifyMaterialsForMeiri(materials: MaterialItem[]) {
-  const ensureArr = (x?: string[]) => (Array.isArray(x) ? x : []);
+function isDeliveringMaterial(m: MaterialItem) {
+  return m.material_status_first_name === "投放中";
+}
 
-  // 判断 material_status_second_name 是否只包含"账户余额不足"
-  const isOnlyBalanceInsufficient = (m: MaterialItem) => {
-    const secondNames = ensureArr(m.material_status_second_name);
-    return secondNames.length === 1 && secondNames[0] === "账户余额不足";
-  };
+function isOnlyBalanceInsufficient(m: MaterialItem) {
+  const secondNames = ensureStatusArray(m.material_status_second_name);
+  return secondNames.length === 1 && secondNames[0] === "账户余额不足";
+}
 
-  // 判断 material_status_second_name 是否包含"审核不通过"
-  const containsRejectStatus = (m: MaterialItem) => {
-    const secondNames = ensureArr(m.material_status_second_name);
-    return secondNames.includes("审核不通过");
-  };
+function containsRejectStatus(m: MaterialItem) {
+  const secondNames = ensureStatusArray(m.material_status_second_name);
+  return secondNames.includes("审核不通过");
+}
 
+function isPendingPreviewMaterial(m: MaterialItem) {
+  return (
+    isPendingMaterial(m) &&
+    isOnlyBalanceInsufficient(m) &&
+    (m.material_reject_reason_type ?? 0) === 0
+  );
+}
+
+function isPendingDeleteMaterial(m: MaterialItem) {
+  return (
+    isPendingMaterial(m) &&
+    ((isOnlyBalanceInsufficient(m) &&
+      (m.material_reject_reason_type ?? 0) === 1) ||
+      (containsRejectStatus(m) &&
+        (m.material_reject_reason_type ?? 0) === 1))
+  );
+}
+
+function isDeliveringPreviewMaterial(m: MaterialItem) {
+  return (
+    isDeliveringMaterial(m) &&
+    ensureStatusArray(m.material_status_second_name).length === 0 &&
+    (m.material_reject_reason_type ?? 0) === 0
+  );
+}
+
+function isDeliveringDeleteMaterial(m: MaterialItem) {
+  return (
+    isDeliveringMaterial(m) &&
+    (m.material_reject_reason_type ?? 0) === 1
+  );
+}
+
+function classifyMaterialsByType(materials: MaterialItem[]) {
   const needPreview = materials.filter(
-    (m) =>
-      isOnlyBalanceInsufficient(m) &&
-      (m.material_reject_reason_type ?? 0) === 0
+    (m) => isPendingPreviewMaterial(m) || isDeliveringPreviewMaterial(m)
   );
 
   const needDelete = materials.filter(
-    (m) =>
-      (isOnlyBalanceInsufficient(m) &&
-        (m.material_reject_reason_type ?? 0) === 1) ||
-      (containsRejectStatus(m) && (m.material_reject_reason_type ?? 0) === 1)
+    (m) => isPendingDeleteMaterial(m) || isDeliveringDeleteMaterial(m)
   );
 
   return { needPreview, needDelete };
@@ -421,67 +428,43 @@ function groupBy<T, K extends string | number>(
   }, {} as Record<K, T[]>);
 }
 
-function promotionsToDelete(materials: MaterialItem[]): string[] {
+function promotionsToDeleteByType(materials: MaterialItem[]): string[] {
   const byPromotion = groupBy(materials, (m) => m.promotion_id);
   const toDelete: string[] = [];
+
   for (const [pid, mats] of Object.entries(byPromotion)) {
-    const anyPreview = mats.some(
-      (m) =>
-        m.material_status_first_name === "投放中" &&
-        (m.material_status_second_name?.length || 0) === 0 &&
-        (m.material_reject_reason_type ?? 0) === 0
-    );
-    const anyNewAudit = mats.some((m) =>
-      (m.material_status_second_name || []).includes("新建审核中")
-    );
-    if (!anyPreview && !anyNewAudit) toDelete.push(pid);
-  }
-  return toDelete;
-}
-
-// 每日主体专用的计划删除逻辑
-function promotionsToDeleteForMeiri(materials: MaterialItem[]): string[] {
-  const ensureArr = (x?: string[]) => (Array.isArray(x) ? x : []);
-
-  // 判断 material_status_second_name 是否只包含"账户余额不足"
-  const isOnlyBalanceInsufficient = (m: MaterialItem) => {
-    const secondNames = ensureArr(m.material_status_second_name);
-    return secondNames.length === 1 && secondNames[0] === "账户余额不足";
-  };
-
-  // 判断 material_status_second_name 是否包含"审核不通过"
-  const containsRejectStatus = (m: MaterialItem) => {
-    const secondNames = ensureArr(m.material_status_second_name);
-    return secondNames.includes("审核不通过");
-  };
-
-  // 判断素材是否应该被删除
-  const shouldDelete = (m: MaterialItem) => {
-    return (
-      (isOnlyBalanceInsufficient(m) &&
-        (m.material_reject_reason_type ?? 0) === 1) ||
-      (containsRejectStatus(m) && (m.material_reject_reason_type ?? 0) === 1)
-    );
-  };
-
-  const byPromotion = groupBy(materials, (m) => m.promotion_id);
-  const toDelete: string[] = [];
-  for (const [pid, mats] of Object.entries(byPromotion)) {
-    // 检查是否有需要预览的素材（只包含"账户余额不足" + reject_reason_type = 0）
-    const anyPreview = mats.some(
-      (m) =>
-        isOnlyBalanceInsufficient(m) &&
-        (m.material_reject_reason_type ?? 0) === 0
+    const deliveringMaterials = mats.filter(isDeliveringMaterial);
+    const pendingMaterials = mats.filter(isPendingMaterial);
+    const hasOtherType = mats.some(
+      (m) => !isDeliveringMaterial(m) && !isPendingMaterial(m)
     );
 
-    // 检查是否所有素材都应该被删除
-    const allShouldDelete = mats.every((m) => shouldDelete(m));
+    const hasPreviewMaterial = mats.some(
+      (m) => isPendingPreviewMaterial(m) || isDeliveringPreviewMaterial(m)
+    );
 
-    // 如果既无需预览素材，且所有素材都应该被删除，则整单删除
-    if (!anyPreview && allShouldDelete) {
+    const deliveringCanDelete =
+      deliveringMaterials.length === 0 ||
+      (!deliveringMaterials.some(isDeliveringPreviewMaterial) &&
+        !deliveringMaterials.some((m) =>
+          ensureStatusArray(m.material_status_second_name).includes("新建审核中")
+        ));
+
+    const pendingCanDelete =
+      pendingMaterials.length === 0 ||
+      (!pendingMaterials.some(isPendingPreviewMaterial) &&
+        pendingMaterials.every(isPendingDeleteMaterial));
+
+    if (
+      !hasOtherType &&
+      !hasPreviewMaterial &&
+      deliveringCanDelete &&
+      pendingCanDelete
+    ) {
       toDelete.push(pid);
     }
   }
+
   return toDelete;
 }
 
@@ -626,7 +609,7 @@ async function fetchAccountsFromFeishu(
   timeWindowStartMinutes: number,
   timeWindowEndMinutes: number,
   aweme_white_list?: string[],
-  filterSubject?: string // 可选：根据主体过滤记录
+  cookie?: string
 ): Promise<PreviewTaskConfig[]> {
   const baseUrl = (feishuCfg.baseUrl || DEFAULT_FEISHU_BASE_URL).replace(
     /\/$/,
@@ -640,7 +623,7 @@ async function fetchAccountsFromFeishu(
   );
 
   const basePayload = {
-    field_names: ["剧名", "账户", "主体", "日期", "当前状态", "搭建时间"],
+    field_names: ["剧名", "账户", "日期", "当前状态", "搭建时间"],
     page_size: 100,
     filter: {
       conjunction: "and",
@@ -706,13 +689,12 @@ async function fetchAccountsFromFeishu(
     };
 
     console.log(
-      `[飞书] 当前时间 ${formatTime(now)}，筛选搭建时间在 ${formatTime(timeWindowStart)}-${formatTime(timeWindowEnd)} 之间的账户（前${timeWindowStartMinutes}分钟至前${timeWindowEndMinutes}分钟）${filterSubject ? `，主体="${filterSubject}"` : ""}`
+      `[飞书] 当前时间 ${formatTime(now)}，筛选搭建时间在 ${formatTime(timeWindowStart)}-${formatTime(timeWindowEnd)} 之间的账户（前${timeWindowStartMinutes}分钟至前${timeWindowEndMinutes}分钟）`
     );
 
     const accountMap = new Map<string, PreviewTaskConfig>();
     let filteredCount = 0;
     let skippedByTimeCount = 0;
-    let skippedBySubjectCount = 0;
 
     for (const record of allRecords) {
       const dramaName = record.fields.剧名?.[0]?.text;
@@ -729,28 +711,12 @@ async function fetchAccountsFromFeishu(
         continue;
       }
 
-      // 解析主体字段
-      let subject: string | undefined;
-      const subjectField = record.fields.主体;
-      if (typeof subjectField === "string") {
-        subject = subjectField.trim();
-      } else if (Array.isArray(subjectField) && subjectField.length > 0) {
-        subject = subjectField[0]?.text?.trim();
-      }
-
-      // 如果指定了 filterSubject，则只保留匹配的记录
-      if (filterSubject && subject !== filterSubject) {
-        skippedBySubjectCount++;
-        continue;
-      }
-
       if (dramaName && accountId) {
         if (!accountMap.has(accountId)) {
           accountMap.set(accountId, {
             aadvid: accountId,
             drama_name: dramaName,
-            subject,
-            cookie: "", // 将由主体映射解析
+            cookie: cookie || "",
             aweme_white_list,
           });
           filteredCount++;
@@ -761,7 +727,7 @@ async function fetchAccountsFromFeishu(
     const accounts = Array.from(accountMap.values());
 
     console.log(
-      `[飞书] 拉取到 ${accounts.length} 条账户配置（Today: ${todayRecords.length}, Yesterday: ${yesterdayRecords.length}，时间过滤: ${skippedByTimeCount}，主体过滤: ${skippedBySubjectCount}，最终: ${filteredCount}）`
+      `[飞书] 拉取到 ${accounts.length} 条账户配置（Today: ${todayRecords.length}, Yesterday: ${yesterdayRecords.length}，时间过滤: ${skippedByTimeCount}，最终: ${filteredCount}）`
     );
 
     return accounts;
@@ -781,48 +747,16 @@ function resolveFeishuConfig(config?: FeishuPreviewConfig["feishu"]): FeishuConf
 }
 
 // =============== Cookie 解析 ===============
-function resolveAccountCookie(
-  account: PreviewTaskConfig,
-  cookieChaoqi?: string,
-  cookieXinya?: string,
-  cookieMeiri?: string
-): string {
+function resolveAccountCookie(account: PreviewTaskConfig, fallbackCookie?: string): string {
   const trim = (v?: string) => (v || "").trim();
 
-  // 1. 优先使用账户自己的 cookie
   const directCookie = trim(account.cookie);
   if (directCookie) return directCookie;
 
-  // 2. 根据主体映射选择 cookie
-  const subject = trim(account.subject);
+  const sharedCookie = trim(fallbackCookie);
+  if (sharedCookie) return sharedCookie;
 
-  if (subject === "超琦" || subject === "虎雨") {
-    if (!cookieChaoqi) {
-      throw new Error(`账户 ${account.aadvid} 主体为${subject}，但未配置 cookieChaoqi`);
-    }
-    return cookieChaoqi;
-  }
-
-  if (subject === "欣雅") {
-    if (!cookieXinya) {
-      throw new Error(`账户 ${account.aadvid} 主体为欣雅，但未配置 cookieXinya`);
-    }
-    return cookieXinya;
-  }
-
-  if (subject === "每日") {
-    if (!cookieMeiri) {
-      throw new Error(`账户 ${account.aadvid} 主体为每日，但未配置 cookieMeiri`);
-    }
-    return cookieMeiri;
-  }
-
-  // 3. 兜底：使用第一个可用的 cookie
-  if (cookieChaoqi) return cookieChaoqi;
-  if (cookieXinya) return cookieXinya;
-  if (cookieMeiri) return cookieMeiri;
-
-  throw new Error(`账户 ${account.aadvid} 没有可用的 cookie`);
+  throw new Error(`账户 ${account.aadvid} 缺少可用的 cookie`);
 }
 
 // =============== 导出的服务类 ===============
@@ -832,9 +766,7 @@ export class PreviewService {
    */
   async analyzeAccount(config: PreviewTaskConfig): Promise<PreviewResult> {
     const client = createClient(config.cookie);
-
-    const subject = config.subject?.trim() || "";
-    console.log(`[预览服务] 分析账户 ${config.aadvid} - 剧名: ${config.drama_name} - 主体: ${subject || "未指定"}`);
+    console.log(`[预览服务] 分析账户 ${config.aadvid} - 剧名: ${config.drama_name}`);
 
     // 1) 拉取广告
     const adsAll = await fetchAllAds(client, config.aadvid);
@@ -868,26 +800,12 @@ export class PreviewService {
     );
     console.log(`[预览服务] 拉取素材总数=${mats.length}`);
 
-    // 4) 根据主体选择不同的分类逻辑
-    let needPreview: MaterialItem[];
-    let needDelete: MaterialItem[];
-    let canDeletePromotions: string[];
-
-    if (subject === "每日") {
-      // 使用每日专用逻辑
-      console.log(`[预览服务] 使用每日主体专用分类逻辑`);
-      const classified = classifyMaterialsForMeiri(mats);
-      needPreview = classified.needPreview;
-      needDelete = classified.needDelete;
-      canDeletePromotions = promotionsToDeleteForMeiri(mats);
-    } else {
-      // 使用散柔/牵龙逻辑
-      console.log(`[预览服务] 使用散柔/牵龙主体分类逻辑`);
-      const classified = classifyMaterials(mats);
-      needPreview = classified.needPreview;
-      needDelete = classified.needDelete;
-      canDeletePromotions = promotionsToDelete(mats);
-    }
+    // 4) 根据素材状态选择不同的分类逻辑
+    console.log(`[预览服务] 使用按素材状态分类逻辑（未投放/投放中）`);
+    const classified = classifyMaterialsByType(mats);
+    const needPreview = classified.needPreview;
+    const needDelete = classified.needDelete;
+    const canDeletePromotions = promotionsToDeleteByType(mats);
 
     console.log(
       `[预览服务] 需预览=${needPreview.length}, 需删除素材=${needDelete.length}`
@@ -1044,25 +962,18 @@ export class PreviewService {
     );
 
     for (const account of batchConfig.accounts) {
-      const { aadvid, drama_name, subject } = account;
+      const { aadvid, drama_name } = account;
       
       try {
         // 解析 cookie
-        const cookie = resolveAccountCookie(
-          account,
-          batchConfig.cookieChaoqi,
-          batchConfig.cookieXinya,
-          batchConfig.cookieMeiri
-        );
+        const cookie = resolveAccountCookie(account, batchConfig.cookie);
 
         const config: PreviewTaskConfig = {
           ...account,
           cookie,
         };
 
-        console.log(
-          `\n===== 账户 ${aadvid} 主体="${subject || ""}" 开始 =====`
-        );
+        console.log(`\n===== 账户 ${aadvid} 开始 =====`);
 
         // 分析
         const analysis = await this.analyzeAccount(config);
@@ -1186,7 +1097,7 @@ export class PreviewService {
       config.buildTimeFilterWindowStartMinutes || 90,
       config.buildTimeFilterWindowEndMinutes || 20,
       config.aweme_white_list,
-      config.subject // 传入主体参数，用于过滤记录
+      config.cookie
     );
 
     if (accounts.length === 0) {
@@ -1204,9 +1115,7 @@ export class PreviewService {
       accounts,
       dryRun: config.dryRun,
       previewDelayMs: config.previewDelayMs || 400,
-      cookieChaoqi: config.cookieChaoqi,
-      cookieXinya: config.cookieXinya,
-      cookieMeiri: config.cookieMeiri,
+      cookie: config.cookie,
     };
 
     return await this.batchProcess(batchConfig);

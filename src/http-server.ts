@@ -177,15 +177,12 @@ export class PreviewHttpServer {
       ? (body.aweme_white_list as string[])
       : undefined;
     const tableId = body?.tableId as string | undefined;
-    const subject = body?.subject as string | undefined;
-
     const config: PreviewTaskConfig = {
       aadvid,
       drama_name,
       cookie,
       aweme_white_list,
       tableId,
-      subject,
     };
 
     console.log(`[预览接口] 分析请求 | 账户: ${aadvid} | 剧名: ${drama_name}`);
@@ -235,7 +232,6 @@ export class PreviewHttpServer {
       ? (body.aweme_white_list as string[])
       : undefined;
     const tableId = body?.tableId as string | undefined;
-    const subject = body?.subject as string | undefined;
     const delayMs = Number(body?.delayMs) || 400;
 
     const config: PreviewTaskConfig = {
@@ -244,7 +240,6 @@ export class PreviewHttpServer {
       cookie,
       aweme_white_list,
       tableId,
-      subject,
     };
 
     console.log(`[预览接口] 执行预览 | 账户: ${aadvid} | 剧名: ${drama_name}`);
@@ -300,7 +295,6 @@ export class PreviewHttpServer {
       ? (body.aweme_white_list as string[])
       : undefined;
     const tableId = body?.tableId as string | undefined;
-    const subject = body?.subject as string | undefined;
     const deleteAds = Boolean(body?.deleteAds);
 
     const config: PreviewTaskConfig = {
@@ -309,7 +303,6 @@ export class PreviewHttpServer {
       cookie,
       aweme_white_list,
       tableId,
-      subject,
     };
 
     console.log(`[预览接口] 停用预览 | 账户: ${aadvid} | 剧名: ${drama_name}`);
@@ -372,16 +365,13 @@ export class PreviewHttpServer {
 
     const dryRun = Boolean(body?.dryRun);
     const previewDelayMs = Number(body?.previewDelayMs) || 400;
-    const cookieChaoqi = body?.cookieChaoqi as string | undefined;
-    const cookieXinya = body?.cookieXinya as string | undefined;
-    const cookieMeiri = body?.cookieMeiri as string | undefined;
+    const cookie = body?.cookie as string | undefined;
 
     const batchConfig: BatchPreviewConfig = {
       accounts: accounts.map((acc) => ({
         aadvid: String(acc.aadvid),
         drama_name: String(acc.drama_name),
         cookie: typeof acc.cookie === "string" ? acc.cookie : "",
-        subject: typeof acc.subject === "string" ? acc.subject : undefined,
         aweme_white_list: Array.isArray(acc.aweme_white_list)
           ? (acc.aweme_white_list as string[])
           : undefined,
@@ -389,9 +379,7 @@ export class PreviewHttpServer {
       })),
       dryRun,
       previewDelayMs,
-      cookieChaoqi,
-      cookieXinya,
-      cookieMeiri,
+      cookie,
     };
 
     console.log(
@@ -413,7 +401,6 @@ export class PreviewHttpServer {
     const body = await this.parseBody(req);
 
     const feishu = body?.feishu as FeishuPreviewConfig["feishu"];
-    const subject = body?.subject as string | undefined;
     const buildTimeFilterWindowStartMinutes =
       Number(body?.buildTimeFilterWindowStartMinutes) || 90;
     const buildTimeFilterWindowEndMinutes =
@@ -423,21 +410,16 @@ export class PreviewHttpServer {
       : undefined;
     const dryRun = Boolean(body?.dryRun);
     const previewDelayMs = Number(body?.previewDelayMs) || 400;
-    const cookieChaoqi = body?.cookieChaoqi as string | undefined;
-    const cookieXinya = body?.cookieXinya as string | undefined;
-    const cookieMeiri = body?.cookieMeiri as string | undefined;
+    const cookie = body?.cookie as string | undefined;
 
     const config: FeishuPreviewConfig = {
       feishu,
-      subject,
       buildTimeFilterWindowStartMinutes,
       buildTimeFilterWindowEndMinutes,
       aweme_white_list,
       dryRun,
       previewDelayMs,
-      cookieChaoqi,
-      cookieXinya,
-      cookieMeiri,
+      cookie,
     };
 
     console.log(
@@ -461,6 +443,7 @@ export class PreviewHttpServer {
     const user = body?.user as string;
     const intervalMinutes = Number(body?.intervalMinutes);
     const aweme_white_list = body?.aweme_white_list as string[];
+    const cookie = body?.cookie as string;
 
     if (!user) {
       this.send(res, 400, { message: "缺少必需参数: user" });
@@ -481,6 +464,11 @@ export class PreviewHttpServer {
       return;
     }
 
+    if (!cookie?.trim()) {
+      this.send(res, 400, { message: "缺少必需参数: cookie" });
+      return;
+    }
+
     const tableId = body?.tableId as string | undefined;
     const buildTimeWindowStart = body?.buildTimeWindowStart
       ? Number(body.buildTimeWindowStart)
@@ -488,13 +476,12 @@ export class PreviewHttpServer {
     const buildTimeWindowEnd = body?.buildTimeWindowEnd
       ? Number(body.buildTimeWindowEnd)
       : undefined;
-    const subject = body?.subject as string | undefined;
 
     const config: PreviewProgramConfig = {
       user,
       intervalMinutes,
       aweme_white_list,
-      subject,
+      cookie,
       tableId,
       buildTimeWindowStart,
       buildTimeWindowEnd,
@@ -545,8 +532,8 @@ export class PreviewHttpServer {
     if (body?.aweme_white_list !== undefined) {
       updates.aweme_white_list = body.aweme_white_list;
     }
-    if (body?.subject !== undefined) {
-      updates.subject = body.subject;
+    if (body?.cookie !== undefined) {
+      updates.cookie = body.cookie;
     }
     if (body?.buildTimeWindowStart !== undefined) {
       updates.buildTimeWindowStart = Number(body.buildTimeWindowStart);
